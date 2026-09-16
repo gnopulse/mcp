@@ -1128,6 +1128,32 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // broadcast. It needs no keybase or network: the caller supplies the account
 // number and sequence used at signing time. It prints one line of JSON and exits
 // 0 whether or not the signature is valid.
+// verifySignature checks the first signature of tx against both sign payload renderings a wallet may
+// produce: the amount/gas fee shape (Adena 1.21 and later, the Ledger Cosmos app) and the older
+// gas_wanted/gas_fee shape.
+func verifySignature(tx std.Tx, chainID string, accountNumber, sequence uint64) (std.PayloadRendering, error) {
+	if len(tx.Signatures) == 0 || tx.Signatures[0].PubKey == nil {
+		return std.PayloadRenderingNone, errors.New("tx carries no signature")
+	}
+	sig := tx.Signatures[0]
+	rendering, err := std.VerifySignaturePayload(sig.PubKey, tx.SignDoc(chainID, accountNumber, sequence), sig.Signature)
+	if err != nil {
+		return std.PayloadRenderingNone, fmt.Errorf("build sign bytes: %w", err)
+	}
+	return rendering, nil
+}
+
+func renderingName(r std.PayloadRendering) string {
+	switch r {
+	case std.PayloadRenderingCurrent:
+		return "current"
+	case std.PayloadRenderingLegacy:
+		return "legacy"
+	default:
+		return "none"
+	}
+}
+
 func cmdVerify(args []string) error {
 	fs := flag.NewFlagSet("verify", flag.ExitOnError)
 	encoded := fs.String("tx", "", "base64 encodedTransaction from adena.SignTx (required)")
@@ -1153,16 +1179,17 @@ func cmdVerify(args []string) error {
 		return fmt.Errorf("verify: tx carries no signature")
 	}
 	sig := tx.Signatures[0]
-	signBytes, err := tx.GetSignBytes(*chainID, *accountNumber, *sequence)
+	rendering, err := verifySignature(tx, *chainID, *accountNumber, *sequence)
 	if err != nil {
-		return fmt.Errorf("verify: build sign bytes: %w", err)
+		return fmt.Errorf("verify: %w", err)
 	}
-	valid := sig.PubKey.VerifyBytes(signBytes, sig.Signature)
+	valid := rendering != std.PayloadRenderingNone
 	memoOK := strings.HasPrefix(tx.Memo, *memoPrefix)
 
 	out := map[string]any{
 		"ok":              valid && memoOK,
 		"signature_valid": valid,
+		"payload":         renderingName(rendering),
 		"address":         sig.PubKey.Address().String(),
 		"memo":            tx.Memo,
 		"memo_ok":         memoOK,
