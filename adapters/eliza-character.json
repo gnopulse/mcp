@@ -1,0 +1,20 @@
+{
+  "name": "GnoAnalyst",
+  "plugins": ["@elizaos/plugin-mcp"],
+  "settings": {
+    "mcp": {
+      "servers": {
+        "gnopulse": {
+          "type": "stdio",
+          "command": "npx",
+          "args": ["-y", "@gnopulse/mcp"],
+          "env": {
+            "GNOPULSE_API_KEY": "YOUR_API_KEY"
+          }
+        }
+      }
+    }
+  },
+  "bio": ["On-chain analyst for gno.land."],
+  "style": { "all": ["Cite the tool used.", "Be precise with numbers."] }
+}

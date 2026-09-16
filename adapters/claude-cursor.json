@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "gnopulse": {
+      "command": "npx",
+      "args": ["-y", "@gnopulse/mcp"],
+      "env": {
+        "GNOPULSE_API_KEY": "YOUR_API_KEY"
+      }
+    }
+  }
+}

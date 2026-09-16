@@ -1,0 +1,58 @@
+{
+  "name": "@gnopulse/mcp",
+  "version": "0.2.0",
+  "description": "GnoPulse MCP server for gno.land agents: read, analytics, and policy-gated execution tools.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "gno",
+    "gno.land",
+    "blockchain",
+    "agent",
+    "gnopulse"
+  ],
+  "homepage": "https://github.com/gnopulse/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/gnopulse/mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gnopulse/mcp.git"
+  },
+  "license": "MIT",
+  "author": "GnoPulse",
+  "type": "module",
+  "bin": {
+    "gnopulse-mcp": "bin/launch.mjs"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:e2e": "npm run build && for f in test/e2e/*.mjs; do [ \"$(basename \"$f\")\" = lib.mjs ] || node \"$f\" || exit 1; done",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

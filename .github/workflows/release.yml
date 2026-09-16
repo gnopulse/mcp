@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: gnotx/go.mod
+          cache-dependency-path: gnotx/go.sum
+
+      - name: Check tag matches package version
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm test
+
+      - run: scripts/build-binaries.sh
+
+      # Releases are staged, not published: a maintainer approves each one on npmjs.com with 2FA
+      # (`npm stage approve`). Approve the gnotx packages before @gnopulse/mcp, which depends on them.
+      - name: Stage gnotx binaries
+        run: for dir in npm/*/; do npm stage publish "$dir" --access public; done
+
+      - name: Stage @gnopulse/mcp
+        run: |
+          node scripts/pin-binaries.mjs
+          npm stage publish --access public
