@@ -34,12 +34,12 @@ jobs:
 
       - run: scripts/build-binaries.sh
 
-      # Releases are staged, not published: a maintainer approves each one on npmjs.com with 2FA
-      # (`npm stage approve`). Approve the gnotx packages before @gnopulse/mcp, which depends on them.
-      - name: Stage gnotx binaries
-        run: for dir in npm/*/; do npm stage publish "$dir" --access public; done
+      # A maintainer approves the run once, on the `npm` environment, before these steps run.
+      # The binaries go first: @gnopulse/mcp pins them by exact version.
+      - name: Publish gnotx binaries
+        run: for dir in npm/*/; do npm publish "$dir" --access public; done
 
-      - name: Stage @gnopulse/mcp
+      - name: Publish @gnopulse/mcp
         run: |
           node scripts/pin-binaries.mjs
-          npm stage publish --access public
+          npm publish --access public
