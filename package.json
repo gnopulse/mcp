@@ -1,6 +1,6 @@
 {
   "name": "@gnopulse/mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "GnoPulse MCP server for gno.land agents: read, analytics, and policy-gated execution tools.",
   "keywords": [
     "mcp",
