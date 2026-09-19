@@ -78,7 +78,6 @@ test("fees-only: allows zero-send calls, denies value transfers", () => {
   const d = p.check(callIntent({ send: "1000ugnot" }));
   assert.equal(d.allow, false);
   assert.match(d.reason, /fees-only/);
-  assert.equal(p.restrictive, true);
 });
 
 test("approve intent is checked against function rules", () => {
@@ -92,12 +91,10 @@ test("deny lists and expiry alone are not restrictive", () => {
   assert.equal(p.restrictive, false);
 });
 
-test("allowlists, send cap, fees-only and default-deny are each restrictive", () => {
+test("allowlists and default-deny are each restrictive", () => {
   for (const over of [
     { allowRealms: ["gno.land/r/x"] },
     { allowFuncs: ["Ping"] },
-    { maxSendUgnot: 0n },
-    { feesOnly: true },
     { defaultAllow: false },
   ]) {
     assert.equal(new ConfigurablePolicy({ ...base, ...over }).restrictive, true, Object.keys(over)[0]);
@@ -106,9 +103,9 @@ test("allowlists, send cap, fees-only and default-deny are each restrictive", ()
 
 test("loadPolicy parses numeric variables", () => {
   const p = loadPolicy({ GNOPULSE_POLICY_MAX_SEND_UGNOT: "1000", GNOPULSE_POLICY_EXPIRES_AT: "4000000000" });
-  assert.equal(p.restrictive, true);
   assert.equal(p.check(callIntent({ send: "2000ugnot" })).allow, false);
   assert.equal(loadPolicy({}).restrictive, false);
+  assert.equal(loadPolicy({ GNOPULSE_POLICY_ALLOW_FUNCS: "Ping" }).restrictive, true);
 });
 
 for (const name of ["GNOPULSE_POLICY_EXPIRES_AT", "GNOPULSE_POLICY_EXPIRES_IN", "GNOPULSE_POLICY_MAX_SEND_UGNOT"]) {
@@ -121,3 +118,30 @@ for (const name of ["GNOPULSE_POLICY_EXPIRES_AT", "GNOPULSE_POLICY_EXPIRES_IN", 
     }
   });
 }
+
+test("a native-ugnot cap does not make a policy restrictive", () => {
+  // maxSendUgnot and feesOnly both read intent.send, which is native ugnot. A GRC20 transfer is
+  // an ordinary call with an empty send, so neither bounds it, and an autonomous signer gated on
+  // `restrictive` must not accept them as a bound.
+  assert.equal(new ConfigurablePolicy({ ...base, maxSendUgnot: 1n }).restrictive, false);
+  assert.equal(new ConfigurablePolicy({ ...base, feesOnly: true }).restrictive, false);
+});
+
+test("bounding what may be called makes a policy restrictive", () => {
+  assert.equal(new ConfigurablePolicy({ ...base, allowRealms: ["gno.land/r/demo/x"] }).restrictive, true);
+  assert.equal(new ConfigurablePolicy({ ...base, allowFuncs: ["Ping"] }).restrictive, true);
+  assert.equal(new ConfigurablePolicy({ ...base, defaultAllow: false }).restrictive, true);
+});
+
+test("feesOnly still denies a native send", () => {
+  // Narrowing `restrictive` must not change what the policy actually enforces.
+  const p = new ConfigurablePolicy({ ...base, feesOnly: true });
+  assert.equal(p.check(callIntent({ send: "1ugnot" })).allow, false);
+  assert.equal(p.check(callIntent({ send: "" })).allow, true);
+});
+
+test("feesOnly does not stop a GRC20 transfer, which is why it is not a bound", () => {
+  const p = new ConfigurablePolicy({ ...base, feesOnly: true });
+  const transfer = callIntent({ pkgpath: "gno.land/r/demo/tok", func: "Transfer", send: "" });
+  assert.equal(p.check(transfer).allow, true);
+});

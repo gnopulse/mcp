@@ -15,7 +15,13 @@ await run(async () => {
   const env = (overrides) => serverEnv({ GNOTX_SERVICE_URL: signer.url, ...overrides });
 
   try {
-    const client = await startStdioClient(env({ GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_MAX_SEND_UGNOT: "1000000" }));
+    const client = await startStdioClient(
+      env({
+        GNOPULSE_SIGNER: "microservice",
+        GNOPULSE_POLICY_ALLOW_REALMS: "gno.land/r/demo/ok",
+        GNOPULSE_POLICY_MAX_SEND_UGNOT: "1000000",
+      }),
+    );
     try {
       const result = await client.callTool("gno_call", { pkgpath: "gno.land/r/demo/ok", func: "Ping" });
       check("microservice executes immediately", result.status === "executed" && executeHits === 1, result.status);
@@ -26,13 +32,24 @@ await run(async () => {
 
     for (const kind of ["microservice", "tee"]) {
       const { code, stderr } = await runToExit(env({ GNOPULSE_SIGNER: kind }));
-      check(`${kind} with a wide-open policy refuses to start`, code === 1 && /wide-open/.test(stderr), stderr.trim());
+      check(`${kind} with an unbounded policy refuses to start`, code === 1 && /does not bound/.test(stderr), stderr.trim());
     }
 
     const denyOnly = await runToExit(
       env({ GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_DENY_REALMS: "gno.land/r/x", GNOPULSE_POLICY_EXPIRES_IN: "60" }),
     );
-    check("deny list and expiry alone refuse to start", denyOnly.code === 1 && /wide-open/.test(denyOnly.stderr), denyOnly.stderr.trim());
+    check("deny list and expiry alone refuse to start", denyOnly.code === 1 && /does not bound/.test(denyOnly.stderr), denyOnly.stderr.trim());
+
+    // A native-ugnot bound is not a bound on what may be called: a GRC20 transfer is a call with
+    // an empty send and passes both of these.
+    for (const over of [{ GNOPULSE_POLICY_MAX_SEND_UGNOT: "1000000" }, { GNOPULSE_POLICY_FEES_ONLY: "1" }]) {
+      const nativeOnly = await runToExit(env({ GNOPULSE_SIGNER: "microservice", ...over }));
+      check(
+        `${Object.keys(over)[0]} alone refuses to start`,
+        nativeOnly.code === 1 && /does not bound/.test(nativeOnly.stderr),
+        nativeOnly.stderr.trim(),
+      );
+    }
 
     const badCap = await runToExit(env({ GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_MAX_SEND_UGNOT: "5gnot" }));
     const named = /GNOPULSE_POLICY_MAX_SEND_UGNOT="5gnot" is invalid/.test(badCap.stderr);

@@ -95,7 +95,7 @@ All optional.
 | `GNOPULSE_POLICY_ALLOW_FUNCS` | | Only these functions (comma-separated) |
 | `GNOPULSE_POLICY_DENY_FUNCS` | | Never these functions |
 | `GNOPULSE_POLICY_DEFAULT` | `allow` | `deny` rejects every call when no allow rule is set |
-| `GNOPULSE_POLICY_FEES_ONLY` | | `1` allows calls but no value transfer |
+| `GNOPULSE_POLICY_FEES_ONLY` | | `1` denies any non-zero native send. Like the cap above, it does not cover a GRC20 transfer, which is a call with an empty send |
 | `GNOPULSE_POLICY_EXPIRES_IN` / `_AT` | | Session expiry in seconds, or a unix time |
 | `GNOPULSE_AGENT_HOME` | `~/.gnopulse-agent` | Agent keybase and signer state |
 | `GNOPULSE_SIGNER_ADDR` | `127.0.0.1:8899` | Local signer address |

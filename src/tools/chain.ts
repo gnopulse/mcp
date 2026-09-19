@@ -2,7 +2,28 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RpcClient } from "../rpc.js";
-import { absentToNull, absentReason, guard, ok, parseAminoAccount } from "./util.js";
+import { absentToNull, absentReason, fail, guard, ok, parseAminoAccount } from "./util.js";
+
+/** A gno pkgpath: the character set excludes quotes, parens and whitespace. */
+const PKGPATH = /^[A-Za-z0-9_./-]+$/;
+
+/** One call expression: an identifier applied to arguments, and nothing after it. */
+const CALL = /^[A-Za-z_][A-Za-z0-9_]*\([^;]*\)$/;
+
+/**
+ * Reject anything that is not a single read-only call on a realm.
+ *
+ * `qeval` is read-only, so this cannot change state, but the expression is concatenated into the
+ * query: without a shape check the caller chooses the whole thing, not just the call. Returns a
+ * reason, or null when the input is fine.
+ */
+export function invalidQeval(pkgpath: string, expr: string): string | null {
+  if (!PKGPATH.test(pkgpath)) return "pkgpath must be a bare gno package path";
+  if (expr.length > 512) return "expr is too long";
+  if (/[\n\r;]/.test(expr)) return "expr must be a single expression";
+  if (!CALL.test(expr)) return "expr must be a call, e.g. TotalSupply() or BalanceOf(\"g1…\")";
+  return null;
+}
 
 export function registerChainTools(server: McpServer, rpc: RpcClient): void {
   server.registerTool(
@@ -19,6 +40,8 @@ export function registerChainTools(server: McpServer, rpc: RpcClient): void {
     },
     ({ pkgpath, expr }) =>
       guard(async () => {
+        const bad = invalidQeval(pkgpath, expr);
+        if (bad) return fail(bad);
         const result = await rpc.qeval(`${pkgpath}.${expr}`);
         // A reason means the query itself was invalid, not that the value is empty.
         const reason = absentReason(result);
