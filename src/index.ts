@@ -65,8 +65,10 @@ function assertSafeSigner(signer: Signer | null, policy: PolicyEngine, transport
   }
   if (!signer.requiresApproval && !(policy instanceof ConfigurablePolicy && policy.restrictive)) {
     die(
-      `GNOPULSE_SIGNER=${signer.kind} is autonomous (no human approval) but the policy is wide-open. Set ` +
-        "GNOPULSE_POLICY_ALLOW_REALMS, _ALLOW_FUNCS, _MAX_SEND_UGNOT, _FEES_ONLY=1, or _DEFAULT=deny.",
+      `GNOPULSE_SIGNER=${signer.kind} is autonomous (no human approval) but the policy does not ` +
+        "bound what it may call. Set GNOPULSE_POLICY_ALLOW_REALMS, _ALLOW_FUNCS, or _DEFAULT=deny. " +
+        "_MAX_SEND_UGNOT and _FEES_ONLY cap native ugnot only and do not bound a GRC20 transfer, " +
+        "so neither is enough on its own.",
     );
   }
 }

@@ -9,10 +9,11 @@
  *   GNOPULSE_POLICY_DENY_REALMS=csv
  *   GNOPULSE_POLICY_ALLOW_FUNCS=csv
  *   GNOPULSE_POLICY_DENY_FUNCS=csv
- *   GNOPULSE_POLICY_MAX_SEND_UGNOT=int     per-tx cap; sends that cannot be parsed are denied
+ *   GNOPULSE_POLICY_MAX_SEND_UGNOT=int     per-tx cap on NATIVE ugnot; unparseable sends denied
  *   GNOPULSE_POLICY_EXPIRES_AT=unix-secs   absolute expiry; wins over EXPIRES_IN
  *   GNOPULSE_POLICY_EXPIRES_IN=secs        expiry relative to startup
- *   GNOPULSE_POLICY_FEES_ONLY=1            deny any non-zero send
+ *   GNOPULSE_POLICY_FEES_ONLY=1            deny any non-zero NATIVE send. Not a value cap: a
+ *                                          GRC20 transfer is a call with an empty send.
  *
  * Malformed numeric values throw a PolicyConfigError naming the variable.
  */
@@ -56,18 +57,19 @@ export class ConfigurablePolicy implements PolicyEngine {
   ) {}
 
   /**
-   * True if the policy bounds spending or scope: an allowlist, a send cap, fees-only, or
-   * default-deny. Deny lists and expiry alone do not. Autonomous signers require this.
+   * True if the policy bounds WHAT may be called: an allowlist, or default-deny. Autonomous
+   * signers require this.
+   *
+   * `maxSendUgnot` and `feesOnly` deliberately do not count. Both inspect `intent.send`, which
+   * is native ugnot, so neither bounds a GRC20 transfer: that is an ordinary realm call with an
+   * empty send, and it passes both. A policy of `feesOnly` alone would otherwise satisfy this
+   * gate while allowing an agent to move every token the wallet holds.
+   *
+   * Deny lists and expiry alone do not count either.
    */
   get restrictive(): boolean {
     const c = this.cfg;
-    return (
-      c.allowRealms.length > 0 ||
-      c.allowFuncs.length > 0 ||
-      c.maxSendUgnot !== undefined ||
-      c.feesOnly === true ||
-      !c.defaultAllow
-    );
+    return c.allowRealms.length > 0 || c.allowFuncs.length > 0 || !c.defaultAllow;
   }
 
   check(intent: Intent): PolicyDecision {

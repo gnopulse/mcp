@@ -20,12 +20,33 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Run a handler, converting thrown errors into an error result. */
+const ENDPOINT = /\b(?:https?|wss?):\/\/[^\s"')]+/gi;
+
+/**
+ * The part of an error a caller may see.
+ *
+ * Upstream failures carry the endpoint they came from, and an upstream body slice with them.
+ * Neither is the caller's to read: it names hosts they cannot reach and were not told about.
+ * The kind of failure is useful, so keep that and drop the rest.
+ */
+export function safeErrorMessage(e: unknown): string {
+  const kind = e instanceof Error && e.name && e.name !== "Error" ? `${e.name}: ` : "";
+  const text = errorMessage(e).replace(ENDPOINT, "<endpoint>");
+  return kind + (text.length > 300 ? `${text.slice(0, 300)}…` : text);
+}
+
+/**
+ * Run a handler, converting thrown errors into an error result.
+ *
+ * The full error goes to stderr, where the operator can see it; the caller gets the redacted
+ * form.
+ */
 export async function guard(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   try {
     return await fn();
   } catch (e) {
-    return fail(errorMessage(e));
+    process.stderr.write(`tool error: ${errorMessage(e)}\n`);
+    return fail(safeErrorMessage(e));
   }
 }
 
