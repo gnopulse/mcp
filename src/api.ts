@@ -88,6 +88,42 @@ export class ApiClient {
     };
   }
 
+  /** Holder distribution is a bundle, not an array-valued resource page. */
+  async holderPageV2(path: string, params?: Params) {
+    const { data, meta } = await this.getV2<Record<string, any>>(path, params);
+    const integer = (v: unknown) => Number.isSafeInteger(v) && Number(v) >= 0;
+    const nextOffset = data?.offset + (data?.holders?.length ?? 0);
+    if (
+      !data ||
+      !Array.isArray(data.holders) ||
+      !integer(data.holder_count) ||
+      !integer(data.offset) ||
+      !integer(data.limit) ||
+      data.limit < 1 ||
+      data.holders.length > data.limit ||
+      !integer(nextOffset) ||
+      (data.holders.length > 0 && nextOffset > data.holder_count) ||
+      data.offset !== Number(params?.offset ?? 0) ||
+      (params?.limit !== undefined && data.limit !== Number(params.limit)) ||
+      typeof data.has_more !== "boolean" ||
+      data.has_more !== nextOffset < data.holder_count ||
+      (data.has_more && data.holders.length === 0)
+    ) {
+      throw new ApiError("Holder response has invalid or contradictory pagination.");
+    }
+    return {
+      // Preserve the published distribution bundle and every summary/partiality field.
+      items: data,
+      next_cursor: null,
+      has_more: data.has_more,
+      total: data.holder_count,
+      limit: data.limit,
+      offset: data.offset,
+      next_offset: data.has_more ? nextOffset : null,
+      quota: meta.quota
+    };
+  }
+
   /** GET a legacy v1 route. Prefer getV2. */
   async get(path: string, params?: Params): Promise<any> {
     const { status, ok, body, quota } = await this.request(this.url(path.startsWith("/") ? path : `/${path}`, params));

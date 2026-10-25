@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (unreleased)
+
+- Clarify that token and NFT collection inputs use identifiers returned by discovery tools, rather than bare realm paths.
+
+- Preserve holder-distribution bundle fields while reporting its actual continuation, total and advancing next_offset at the MCP page level. Reject contradictory pagination instead of silently ending a holder scan.
+
 ## 0.3.0 (2026-10-25)
 
 - Fail closed for hosted chain/simulation tools when usage authorization is unavailable or malformed. Keep local public-RPC reads independent of hosted metering availability.

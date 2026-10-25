@@ -27,7 +27,7 @@ export function registerV2Tools(server: McpServer, api: ApiClient): void {
     {
       title: "NFT collection",
       description: "A GRC721 collection's holders, supply, and distribution.",
-      inputSchema: { pkgpath: z.string().describe("collection realm pkgpath, e.g. gno.land/r/gnoswap/gnft") },
+      inputSchema: { pkgpath: z.string().describe("full collection ID from gno_nft_holdings.by_collection, including the qualified token suffix") },
     },
     ({ pkgpath }) => guard(async () => ok((await api.getV2(`nft/collections/${seg(pkgpath)}`)).data)),
   );

@@ -36,3 +36,49 @@ test("legacy HTTP-200 errors are surfaced", async () => {
     await assert.rejects(api.get("/api/launchpad/quote"), /unsafe curve state/);
   });
 });
+
+test("holder bundle preserves distribution and reports real continuation", async () => {
+  const data = {
+    holders: [{ address: "a" }, { address: "b" }],
+    holder_count: 7,
+    offset: 2,
+    limit: 2,
+    has_more: true,
+    partial: true,
+    cohorts: { whales: 1 }
+  };
+  await serve({ data, meta: {} }, async (api) => {
+    const page = await api.holderPageV2("tokens/example/holders", { limit: 2, offset: 2 });
+    assert.deepEqual(page.items, data);
+    assert.equal(page.total, 7);
+    assert.equal(page.has_more, true);
+    assert.equal(page.next_offset, 4);
+    assert.equal(page.quota["x-quota-daily-remaining"], "99");
+  });
+  await serve(
+    { data: { ...data, holders: [{ address: "z" }], offset: 6, has_more: false }, meta: {} },
+    async (api) => {
+      const page = await api.holderPageV2("tokens/example/holders", { offset: 6, limit: 2 });
+      assert.equal(page.has_more, false);
+      assert.equal(page.next_offset, null);
+    }
+  );
+});
+
+test("holder continuation rejects malformed or stalled pages", async () => {
+  const valid = { holders: [{ address: "a" }], holder_count: 2, offset: 0, limit: 1, has_more: true };
+  for (const data of [
+    { ...valid, has_more: false },
+    { ...valid, holders: [] },
+    { ...valid, holder_count: "2" },
+    { ...valid, offset: -1 },
+    { ...valid, holders: {} },
+    { ...valid, limit: 0 },
+    { ...valid, holder_count: 0, has_more: false },
+    { ...valid, offset: Number.MAX_SAFE_INTEGER, holder_count: Number.MAX_SAFE_INTEGER, has_more: false }
+  ]) {
+    await serve({ data, meta: {} }, async (api) => {
+      await assert.rejects(api.holderPageV2("tokens/example/holders"), /pagination/);
+    });
+  }
+});

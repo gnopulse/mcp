@@ -104,12 +104,12 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
       title: "Token holders",
       description: "Holder distribution for a GRC20 token.",
       inputSchema: {
-        token: z.string().describe("GRC20 token pkgpath"),
+        token: z.string().describe("canonical token_path from gno_prices or gno_token_registry, including its qualified token name"),
         offset: z.number().int().min(0).max(100000).optional(),
         limit: limitParam(500).default(100),
       },
     },
-    ({ token, limit, offset }) => guard(async () => ok(await api.listV2(`tokens/${seg(token)}/holders`, { limit, offset }))),
+    ({ token, limit, offset }) => guard(async () => ok(await api.holderPageV2(`tokens/${seg(token)}/holders`, { limit, offset }))),
   );
 
   server.registerTool(
@@ -129,7 +129,7 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
       title: "Token candles (OHLCV)",
       description: "OHLCV candles for a token.",
       inputSchema: {
-        token: z.string().describe("token pkgpath"),
+        token: z.string().describe("canonical token_path returned by gno_prices or gno_token_registry"),
         interval: z.string().optional().describe("e.g. 1h, 1d"),
         limit: limitParam(1000),
       },
@@ -177,7 +177,7 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
     {
       title: "Holder-count series",
       description: "Holder-count time series for a token.",
-      inputSchema: { token: z.string().describe("token pkgpath") },
+      inputSchema: { token: z.string().describe("canonical token_path returned by gno_prices or gno_token_registry") },
     },
     ({ token }) => guard(async () => ok((await api.getV2(`tokens/${seg(token)}/holder-series`)).data)),
   );
