@@ -25,6 +25,7 @@ export interface SharedDeps {
   /** null when execution is disabled (simulate only). */
   signer: Signer | null;
   approvals: ApprovalStore;
+  simulationAvailable?: boolean;
 }
 
 export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
@@ -45,7 +46,11 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
     signer: deps.signer,
     approvals: deps.approvals,
     chainId: cfg.chainId,
+    agentAddress: cfg.agentAddress,
+    agentId: cfg.agentId,
+    approvalPublicKey: cfg.approvalPublicKey,
     readOnly: cfg.transport === "http",
+    simulationAvailable: deps.simulationAvailable
   });
 
   return server;

@@ -1,0 +1,23 @@
+# Local source build of the unreleased permission repair. Replace the absolute path.
+# Run npm ci and npm run build in that checkout before starting Codex.
+# Build gnotx with go -C gnotx build -o /absolute/path/to/gnotx .
+[mcp_servers.gnopulse_onyx]
+command = "node"
+args = ["/absolute/path/to/mcp/bin/launch.mjs"]
+startup_timeout_sec = 60
+tool_timeout_sec = 360
+env_vars = ["GNOPULSE_API_KEY"]
+
+[mcp_servers.gnopulse_onyx.env]
+GNOPULSE_API_BASE = "https://gnopulse.xyz/onyx"
+GNO_CHAIN_ID = "onyx-1"
+GNO_RPC_URLS = "https://rpc.onyx.testnets.gno.land"
+GNOPULSE_AGENT_ID = "codex"
+GNOPULSE_SIGNER = "none"
+GNOTX_BIN = "/absolute/path/to/gnotx"
+
+# Signing stays off. To opt into local interactive execution later, the owner
+# explicitly changes GNOPULSE_SIGNER to user-approval and configures policy.
+# Codex handles MCP elicitation natively; no host receipt key is needed for it.
+# Keep API keys and wallet profiles outside repositories. Use a distinct ID
+# for each logical agent. Hosted HTTP does not expose execution tools.

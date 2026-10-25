@@ -5,13 +5,13 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) server that lets AI agents read, analyze and transact on [gno.land](https://gno.land).
 
-- **42 tools**: chain reads, wallets, tokens, NFTs, pools, and on-chain analytics from [GnoPulse](https://gnopulse.xyz).
+- **Chain and analytics tools**: chain reads, wallets, tokens, NFTs, pools, and on-chain analytics from [GnoPulse](https://gnopulse.xyz).
 - **Local signing**: keys stay in `gnotx`, a local signer process. The model and the MCP server never see them.
-- **Human approval by default**: every write is simulated and policy-checked, and nothing is broadcast until you confirm it.
+- **Signing disabled by default**: agent identity, service execution permission and an explicit signer mode are separate from API access. Interactive mode requires trusted client approval.
 
 ## Quick start
 
-### Hosted: read, analyze, simulate
+### Hosted: read and analyze
 
 No install. Get an API key at [gnopulse.xyz](https://gnopulse.xyz), then add:
 
@@ -26,26 +26,37 @@ No install. Get an API key at [gnopulse.xyz](https://gnopulse.xyz), then add:
 }
 ```
 
-The hosted server holds no keys, so it cannot sign. The HTTP transport serves read and simulate tools only.
+The hosted server holds no wallet keys. HTTP never registers execution or confirmation tools. Simulation is advertised only when an explicitly configured healthy backend declares unsigned simulation support. A listed tool can still become unavailable during a later outage; failures never fall back to signing.
 
-### Local: execute on chain
+### Local: separate agent identity from execution permission
+
+This source includes an unreleased wallet-permission repair. Use matching MCP and native binary versions; do not mix it with an older signing backend.
+
+With no agent ID, the default launcher runs data tools without creating a wallet. To create a persistent wallet for one agent, configure:
 
 ```json
 {
   "mcpServers": {
-    "gnopulse": { "command": "npx", "args": ["-y", "@gnopulse/mcp"] }
+    "developer": {
+      "command": "npx",
+      "args": ["-y", "@gnopulse/mcp"],
+      "env": {
+        "GNOPULSE_API_KEY": "YOUR_KEY",
+        "GNOPULSE_AGENT_ID": "developer",
+        "GNOPULSE_SIGNER": "none"
+      }
+    }
   }
 }
 ```
 
-On first start the launcher:
+Give every logical agent a distinct lowercase `GNOPULSE_AGENT_ID`. Its keybase is stored under `~/.gnopulse-agent/agents/<chain>/<agent-id>` (or the same suffix beneath `GNOPULSE_AGENT_HOME`). An agent ID reuses its wallet on restart; different IDs and chains have separate wallets. API keys authenticate data access and do not grant wallet execution authority. Do not reuse another agent's ID or copy its keybase.
 
-1. Uses the prebuilt `gnotx` binary for your platform (macOS, Linux, Windows; x64 and arm64), installed as an optional npm dependency.
-2. Creates a dedicated agent key in `~/.gnopulse-agent`.
-3. Starts `gnotx serve` on `127.0.0.1` with a random session token. Each launcher allocates an independent loopback port and stops only its own signer when the MCP client exits or is interrupted. Concurrent clients retain the same persistent wallet but cannot interrupt each other's signer. An explicitly configured occupied port is refused, including a matching signer.
-4. Serves every tool over stdio, with human-approval signing.
+The launcher starts its own authenticated loopback service with execution disabled. A named agent can inspect its address and simulate ordinary realm calls using public key metadata, without signing. Without an ID and with signing disabled, no keybase or service is created. Funding a wallet does not enable execution.
 
-Ask the agent for its wallet status to get its address, then fund it. This is gnoland-1 mainnet with real GNOT, so use a dedicated wallet and fund only what the agent needs.
+The owner can explicitly select `GNOPULSE_SIGNER=user-approval`. Proposals return an unsigned preview and single-use token. `gno_confirm` accepts authenticated host approval or requests consent through MCP elicitation. The client chooses the presentation, such as an in-chat confirmation or approval card. A token or model-supplied tool argument is insufficient. Unsupported clients, cancellation, refusal and expiry fail closed. Elicitation waits only until the proposal expires and follows tool-call cancellation; an expired, cancelled or failed approval cannot be revived by a late response. Clients must present these requests to the human, not automatically accept them.
+
+The launcher uses the bundled native binary, isolates service ports, and stops its own child service on exit. An occupied configured port is refused. Legacy `~/.gnopulse-agent` keys are not moved, deleted or silently reused: back them up and explicitly plan migration before funding a new agent address.
 
 Examples for ElizaOS, LangChain, the OpenAI Agents SDK and the Vercel AI SDK are in [`adapters/`](adapters).
 
@@ -56,12 +67,23 @@ agent ──▶ gno_call / gno_swap / gno_approve
             │  simulate + policy check
             ▼
           preview + approval token      (nothing broadcast)
-            │  user confirms
+            │  client requests human consent
             ▼
-          gno_confirm ──▶ gnotx signs and broadcasts
+          gno_confirm ──▶ consent accepted + policy rechecked
+                           └─▶ gnotx re-simulates unsigned, then signs and broadcasts
 ```
 
-Set `GNOPULSE_SIGNER=microservice` to execute without a confirmation step. The server refuses to start in that mode unless the policy bounds spending or scope (a realm or function allow list, a send cap, fees only, or default deny). Deny lists and expiry alone are not enough. `GNOPULSE_SIGNER=tee` behaves the same, for a `gnotx serve` that uses an external signer backend (local mnemonic or Turnkey).
+Set `GNOPULSE_SIGNER=microservice` to execute without per-transaction confirmation. This is an explicit standing execution grant. Startup requires both realm and function allowlists, explicit native-send, fee and gas caps, and a future expiry. `GNOPULSE_SIGNER=tee` uses the same grant rules with an external signer. `EXPIRES_IN` is relative to startup; use `EXPIRES_AT` for a fixed cutoff across restarts. These are per-transaction bounds, not cumulative budgets; native-send caps do not restrict GRC20 token amounts. Allowing a token transfer or approval function grants whatever token authority that call and its arguments permit.
+
+### Client-native human confirmation
+
+MCP does not provide a universal proof that a user said yes in chat. A trusted host integration can turn authenticated user confirmation into a transaction-bound Ed25519 authorization. Set `GNOPULSE_APPROVAL_PUBLIC_KEY_FILE` to the host authorization public-key PEM. Keep the matching private key in the host's separate secret store, outside model tools, prompts and the agent wallet. This is an authorization key, not the blockchain wallet key.
+
+An interactive proposal includes `approval_challenge` when a host key is configured. The host presents the exact challenge intent and simulation to its user, obtains consent through its own interface, then uses `signClientApproval` and attaches the receipt to the `gno_confirm` request's `_meta["io.gnopulse/approval"]`. The server checks the configured key, wallet, chain, agent, transaction, preview digest, gas/fee bounds, token and expiry. Receipts are single-use. Invalid supplied receipts never fall back to another approval method. See [`adapters/trusted-client-approval.mjs`](adapters/trusted-client-approval.mjs).
+
+Without a signed receipt, a client supporting MCP form elicitation can collect approval using that standard mechanism. Its presentation need not be a separate form. Unsupported clients refuse execution. A native tool-approval event from another platform is not automatically a receipt: the trusted host adapter must connect it to this challenge. Codex can use native MCP elicitation directly; see `adapters/codex.toml`. Custom host receipt adapters are optional. This package does not configure ChatGPT or Claude approval integrations, and hosted HTTP still exposes no execution tools.
+
+The host must not sign receipts based on the model claiming approval or expose its signing helper as an agent tool. Either approval path trusts the host to obtain real consent. To revoke a configured host authorization key, remove or replace its public-key configuration and restart the local MCP process; pending proposals are in memory and do not survive restart.
 
 ## Tools
 
@@ -79,7 +101,7 @@ Data and analytics tools call the GnoPulse API with `GNOPULSE_API_KEY`.
 
 ## Configuration
 
-All optional.
+Data access needs no wallet configuration. Execution requires an explicit agent identity, wallet address and enabled signing service. The launcher supplies the wallet address after reading public metadata.
 
 | Variable | Default | |
 |---|---|---|
@@ -88,7 +110,7 @@ All optional.
 | `GNO_RPC_URLS` | public gnoland-1 RPCs | Comma-separated RPC endpoints, tried in order |
 | `GNO_CHAIN_ID` | `gnoland-1` | Also passed to the signer by the launcher |
 | `GNO_GRC20_REGISTRY` | `gno.land/r/nt/grc20reg/v0` | GRC20 registry realm |
-| `GNOPULSE_SIGNER` | `user-approval` with `npx`, else `none` | `user-approval`, `microservice`, `tee`, or `none` (simulate only) |
+| `GNOPULSE_SIGNER` | `none` | `user-approval`, `microservice`, `tee`, or `none` (simulate only) |
 | `GNOPULSE_POLICY_MAX_SEND_UGNOT` | `5000000` with `npx`, else none | Maximum native ugnot sent per transaction. Does not cover GRC20 approve or swap amounts |
 | `GNOPULSE_POLICY_ALLOW_REALMS` | | Only these realms (comma-separated) |
 | `GNOPULSE_POLICY_DENY_REALMS` | | Never these realms |
@@ -96,8 +118,13 @@ All optional.
 | `GNOPULSE_POLICY_DENY_FUNCS` | | Never these functions |
 | `GNOPULSE_POLICY_DEFAULT` | `allow` | `deny` rejects every call when no allow rule is set |
 | `GNOPULSE_POLICY_FEES_ONLY` | | `1` denies any non-zero native send. Like the cap above, it does not cover a GRC20 transfer, which is a call with an empty send |
+| `GNOPULSE_APPROVAL_PUBLIC_KEY_FILE` | | Trusted host Ed25519 authorization public-key PEM file |
+| `GNOPULSE_POLICY_MAX_FEE_UGNOT` | | Maximum gas plus storage ceiling per transaction (refunds excluded) |
+| `GNOPULSE_POLICY_MAX_GAS` | | Maximum simulated gas per transaction |
 | `GNOPULSE_POLICY_EXPIRES_IN` / `_AT` | | Session expiry in seconds, or a unix time |
-| `GNOPULSE_AGENT_HOME` | `~/.gnopulse-agent` | Agent keybase and signer state |
+| `GNOPULSE_AGENT_ID` | none | Required for a wallet; unique lowercase ID per logical agent |
+| `GNOPULSE_AGENT_ADDRESS` | launcher sets it | Expected service wallet, required when running an execution server directly |
+| `GNOPULSE_AGENT_HOME` | `~/.gnopulse-agent` | Root for `agents/<chain>/<agent-id>` keybases |
 | `GNOPULSE_SIGNER_ADDR` | allocated loopback port | Exclusive local signer address; an occupied fixed address is refused |
 | `GNOTX_BIN` | bundled binary | Use your own `gnotx` build |
 | `GNOTX_SERVICE_URL` | `http://127.0.0.1:8787` | Signing service URL (the launcher sets it) |
@@ -110,7 +137,7 @@ All optional.
 
 Malformed numeric policy values stop the server with an error naming the variable.
 
-To self-host the HTTP transport, set `GNOPULSE_MCP_TRANSPORT=http` (see the [`Dockerfile`](Dockerfile)). It serves read and simulate tools only and refuses to start with any signer configured.
+To self-host the HTTP transport, set `GNOPULSE_MCP_TRANSPORT=http` (see the [`Dockerfile`](Dockerfile)). It refuses every configured execution signer. To add simulation, explicitly configure a matching unsigned-only `gnotx serve -caller <public-address>` backend. This mode holds no keys and accepts a caller per request; it cannot enable execution. Hosted simulation requires a caller address and, before its first on-chain transaction, its compressed public key. Only ordinary MsgCall previews are supported; read-only/non-crossing functions should use qeval. Code-bearing deployment/run messages can require signatures and are not supported by this unsigned hosted preview.
 
 ## Development
 
@@ -141,10 +168,12 @@ GNO_CHAIN_ID=onyx-1 \
 GNO_RPC_URLS=https://rpc.onyx.testnets.gno.land \
 GNOPULSE_API_BASE=https://gnopulse.xyz/onyx \
 GNOPULSE_AGENT_HOME=/path/to/private/onyx-test-wallet \
+GNOPULSE_AGENT_ID=onyx-developer \
+GNOPULSE_SIGNER=none \
 npx -y @gnopulse/mcp
 ```
 
-The API key must belong to the Onyx service. Verify `gno_status` and `gno_agent_status` report `onyx-1` before continuing. Funding and transaction broadcasts are separate actions requiring approval. HTTP exposes status and simulation but does not register execution, deployment, or confirmation tools.
+The API key must belong to the Onyx service. Verify `gno_status` and `gno_agent_status` report `onyx-1` before continuing. Funding and transaction broadcasts are separate actions requiring approval. HTTP exposes status and, only with a verified backend, unsigned simulation. Execution, deployment and confirmation tools are absent.
 
 ## Data contracts
 
@@ -160,13 +189,11 @@ not proof of wash trading or common ownership. Both accept supported windows of 
 30 days and an offset. These tools require the matching v2 API release and its rollups.
 Application-level errors inside HTTP-200 responses are returned as MCP tool errors.
 
-Set `GNOPULSE_SIGNER=none` for read-only local use: the launcher does not resolve a signer
-binary, create a keybase, generate secrets or start a signer process. Hosted HTTP remains
-read/simulate only. Transport sessions are not wallet authorization.
+For data-only local use, omit `GNOPULSE_AGENT_ID` and set `GNOPULSE_SIGNER=none`: no binary, keybase, secrets or child service is needed. With an ID, the same signing-disabled setting creates that agent's wallet and starts an execution-disabled unsigned preview service.
 
-For an externally managed shared signer, run the built server directly (`node dist/index.js`)
-with `GNOTX_SERVICE_URL` and `GNOTX_SERVICE_TOKEN`. Its lifetime belongs to your service
-manager. The launcher owns isolated child signers and does not adopt preexisting processes.
+For an externally managed **per-agent** signing service, explicitly run `gnotx serve -allow-execute` with a private bearer token. Run `node dist/index.js` with the matching `GNOPULSE_AGENT_ID`, `GNOPULSE_AGENT_ADDRESS`, service URL/token and signer mode. Never share a signing identity between unrelated agents or attach a production settlement key to hosted MCP. Its lifetime belongs to your service manager.
+
+The trusted local operator controls configuration and keybase access. These controls isolate MCP tool authority, not hostile processes with the same operating-system account, a compromised client that forges consent, or an extracted private key. Policies are local configuration, not on-chain signed delegation grants. Cumulative token budgets and delegated session accounts remain separate capabilities.
 
 
 Settled swap signals page with `gno_swap_signals` using the previous result's
@@ -175,3 +202,18 @@ compatibility option; do not combine it with a cursor. Cursor calls fail explici
 older APIs that do not return the cursor contract, rather than silently repeating page one.
 Deploy the supporting API before updating MCP clients. Roll back affected MCP clients before
 rolling an API back to a release without cursor support.
+
+
+Wallet status and funding instructions use the configured agent address and chain after verifying the backend identity. A mismatch is an error, with no funding instructions. An unavailable balance is not reported as an empty wallet. Unconfigured data-only and hosted clients do not adopt the service's default caller as an agent wallet.
+
+Swap policies check the concrete `gno.land/r/gnoswap/router.ExactInSwapRoute` call. The same target, arguments and fixed deadline are used for preview, consent and execution; metadata cannot substitute a different policy target.
+
+### Transaction review and storage limits
+
+Human approval shows a deterministic plain-language summary before technical details: action, network, agent wallet, amount sent, gas fee ceiling, estimated storage deposit, authorized storage ceiling, estimated refund and maximum native debit. Known swap/allowance/wrapped-GNOT intents have specific descriptions. Unknown realm functions show their exact target and ordered arguments with effects explicitly undecoded; token decimals and contract outcomes are never invented. The native client's Accept button submits the form. The separate signing checkbox must also be checked; it remains false by default.
+
+Unsigned previews retain `estimated_fee_ugnot` as the gas component and add `estimated_storage_deposit_ugnot`, `storage_deposit_limit_ugnot`, `estimated_storage_refund_ugnot` and `estimated_total_fee_ugnot`. The last field is gas plus the authorized storage ceiling, without subtracting refunds. `GNOPULSE_POLICY_MAX_FEE_UGNOT` bounds that combined amount; the separately configured native send cap still applies. These limits do not cap GRC20 movements or every possible contract effect.
+
+The proposal binds total fee, gas and storage ceilings. `/execute` requires `max_gas_wanted`, `max_fee_ugnot` (gas plus storage) and `max_storage_deposit_ugnot` together. The signing service re-simulates, rejects cost growth beyond consent, and writes the approved storage ceiling into the signed MsgCall.MaxDeposit. On-chain enforcement protects against storage growth after the final simulation; a rejected transaction can still consume its authorized gas fee. A zero MaxDeposit invokes the chain default, so a zero-storage estimate reserves and discloses one ugnot instead. Missing, malformed, inconsistent or overflowing cost estimates cannot authorize signing. Gas-only older backends must be upgraded with the MCP client.
+
+Hosted chain/simulation tools require a successful usage-authorization response before execution. Timeouts, network failures, malformed allowances and explicit denials stop the tool. Local stdio public-RPC reads preserve their no-key and metering-outage behavior; an intentionally keyless hosted deployment must set its key requirement off explicitly.

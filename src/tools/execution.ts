@@ -1,3 +1,4 @@
+import { approvalChallenge, CLIENT_APPROVAL_META, verifyClientApproval } from "../signer/clientApproval.js";
 /**
  * Execution tools. Every write follows the same flow:
  *   1. build an Intent
@@ -12,11 +13,13 @@
  */
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Gnotx, GnotxEnvelope } from "../gnotx.js";
+import { SignerIdentityError, type Gnotx, type GnotxEnvelope } from "../gnotx.js";
 import type { RpcClient } from "../rpc.js";
 import type { Intent, PolicyEngine, Signer } from "../signer/types.js";
 import type { ApprovalStore } from "../signer/approvals.js";
-import { GNOSWAP_ROUTER, swapCallArgs } from "../signer/execute.js";
+import { ConfigurablePolicy } from "../signer/policy.js";
+import { approvalMessage, previewLimits } from "../signer/approvalDisplay.js";
+import { callForIntent } from "../signer/call.js";
 import {
   absentToNull,
   errorMessage,
@@ -25,7 +28,7 @@ import {
   parseAminoAccount,
   ugnotBalance,
   type AminoAccount,
-  type ToolResult,
+  type ToolResult
 } from "./util.js";
 
 const MAINNET_CHAIN_ID = "gnoland-1";
@@ -46,7 +49,7 @@ const CLA_REALM = "gno.land/r/sys/cla";
 
 const ENABLE_HINT =
   "Execution is disabled: this server is read/simulate-only and holds no keys. To enable on-chain " +
-  "execution, the user runs the GnoPulse MCP locally with GNOPULSE_SIGNER=microservice and a local " +
+  "execution, the user runs the GnoPulse MCP locally with GNOPULSE_SIGNER=user-approval and a local " +
   `gnotx signing service (see ${EXEC_GUIDE}). The key stays on the user's machine.`;
 
 export interface ExecutionDeps {
@@ -58,25 +61,38 @@ export interface ExecutionDeps {
   approvals: ApprovalStore;
   /** Configured chain id, used when the signing service does not report one. */
   chainId: string;
+  agentAddress?: string;
+  agentId?: string;
+  approvalPublicKey?: string;
   /** HTTP exposes reads and simulation, never execution or confirmation tools. */
   readOnly?: boolean;
-}
-
-function envList(name: string): string[] {
-  return (process.env[name] || "").split(",").map((s) => s.trim()).filter(Boolean);
+  simulationAvailable?: boolean;
 }
 
 export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): void {
   const { gnotx, rpc, policy, signer, approvals } = deps;
 
   /** The signing service's address and chain, plus that address's on-chain account if it has one. */
-  async function agentAccount(): Promise<{ address: string | null; chainId: string; account: AminoAccount | null }> {
-    const health = await gnotx.health().catch(() => null);
-    const address = typeof health?.caller === "string" ? health.caller : null;
-    const chainId = typeof health?.chainid === "string" && health.chainid ? health.chainid : deps.chainId;
-    if (!address) return { address, chainId, account: null };
-    const raw = absentToNull(await rpc.authAccount(address));
-    return { address, chainId, account: raw !== null ? parseAminoAccount(raw) : null };
+  async function agentAccount(): Promise<{
+    address: string | null;
+    chainId: string;
+    account: AminoAccount | null;
+  }> {
+    const address = deps.agentAddress ?? null;
+    const chainId = deps.chainId;
+    try {
+      const health = await gnotx.verifiedHealth();
+      if (!health.ok || !address) return { address, chainId, account: null };
+    } catch (e) {
+      if (e instanceof SignerIdentityError) throw e;
+      return { address, chainId, account: null };
+    }
+    const raw = await rpc.authAccount(address).then(absentToNull, () => null);
+    return {
+      address,
+      chainId,
+      account: raw !== null ? parseAminoAccount(raw) : null
+    };
   }
 
   server.registerTool(
@@ -87,7 +103,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         "The agent's own on-chain identity: the address this MCP signs with (use it as your caller or " +
         "recipient), its ugnot balance and sequence, the chain, whether execution is enabled, and the " +
         "active policy bounds. Call this first, before acting, to learn your address and whether you can pay gas.",
-      inputSchema: {},
+      inputSchema: {}
     },
     () =>
       guard(async () => {
@@ -98,6 +114,9 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         let nextStep: string;
         if (signer === null) {
           nextStep = ENABLE_HINT;
+        } else if (balanceUgnot === null) {
+          nextStep =
+            "Wallet balance is unavailable. Check the configured service and RPC before funding or acting.";
         } else if (!funded) {
           nextStep =
             `Wallet ${address ?? "?"} has no GNOT for gas. Ask the user to fund it${fundingHint(chainId)}; ` +
@@ -116,51 +135,82 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           sequence: account?.sequence ?? null,
           funded,
           execution_enabled: signer !== null,
+          signing_mode: !signer ? "disabled" : signer.requiresApproval ? "interactive" : "autonomous",
+          approval_methods: signer?.requiresApproval
+            ? ["mcp_elicitation", ...(deps.approvalPublicKey ? ["signed_client_approval"] : [])]
+            : [],
+          agent_id: process.env.GNOPULSE_AGENT_ID || null,
+          simulation_available: deps.simulationAvailable === true,
           faucet: faucetFor(chainId),
           guide: EXEC_GUIDE,
           next_steps: [nextStep],
-          policy: {
-            default: process.env.GNOPULSE_POLICY_DEFAULT || "allow",
-            allow_realms: envList("GNOPULSE_POLICY_ALLOW_REALMS"),
-            deny_realms: envList("GNOPULSE_POLICY_DENY_REALMS"),
-            max_send_ugnot: process.env.GNOPULSE_POLICY_MAX_SEND_UGNOT || null,
-          },
+          policy: policy instanceof ConfigurablePolicy ? policy.describe() : { default: "deny" }
         });
-      }),
+      })
   );
 
-  server.registerTool(
-    "gno_simulate",
-    {
-      title: "Simulate call",
-      description:
-        "Simulate a realm function call without broadcasting. Returns gas used, the return value, and " +
-        "whether it would succeed. Nothing is signed or sent.",
-      inputSchema: {
-        pkgpath: z.string().describe("target realm pkgpath"),
-        func: z.string().describe("exported function name"),
-        args: z.array(z.string()).optional().describe("positional args, in order"),
-        send: z.string().optional().describe("coins to send, e.g. 1000000ugnot"),
-      },
-    },
-    ({ pkgpath, func, args, send }) =>
-      guard(async () => {
-        try {
-          return ok(await gnotx.simulateCall(pkgpath, func, args, send));
-        } catch (e) {
-          return ok({ status: "simulate_failed", reason: errorMessage(e) });
+  if (deps.simulationAvailable)
+    server.registerTool(
+      "gno_simulate",
+      {
+        title: "Simulate call",
+        description:
+          "Simulate a realm function call without broadcasting. Returns gas used, the return value, and " +
+          "whether it would succeed. No transaction is signed or broadcast. Later chain state can change the result.",
+        inputSchema: {
+          pkgpath: z.string().describe("target realm pkgpath"),
+          func: z.string().describe("exported function name"),
+          args: z.array(z.string()).optional().describe("positional args, in order"),
+          send: z.string().optional().describe("coins to send, e.g. 1000000ugnot"),
+          caller: z
+            .string()
+            .optional()
+            .describe("caller address (required on hosted HTTP; local defaults to the agent wallet)"),
+          publicKey: z
+            .string()
+            .regex(/^(02|03)[0-9a-fA-F]{64}$/)
+            .optional()
+            .describe("compressed public key hex, needed before the caller publishes its first transaction")
         }
-      }),
-  );
+      },
+      ({ pkgpath, func, args, send, caller, publicKey }) =>
+        guard(async () => {
+          if (deps.readOnly && !caller)
+            return {
+              ...ok({
+                status: "invalid_param",
+                reason: "caller is required for hosted simulation"
+              }),
+              isError: true
+            };
+          try {
+            const preview = await gnotx.simulateCall(pkgpath, func, args, send, caller, publicKey);
+            return {
+              ...ok(preview),
+              ...(preview.ok !== true ? { isError: true } : {})
+            };
+          } catch (e) {
+            return {
+              ...ok({ status: "simulate_failed", reason: errorMessage(e) }),
+              isError: true
+            };
+          }
+        })
+    );
 
   if (deps.readOnly) return;
 
-  async function propose(intent: Intent, simulate: () => Promise<GnotxEnvelope>): Promise<ToolResult> {
+  async function propose(intent: Intent): Promise<ToolResult> {
+    if (!signer) return ok({ status: "execution_disabled", note: ENABLE_HINT });
+    const call = callForIntent(intent);
+    Object.assign(intent, call);
+    const initialDecision = await policy.check(intent);
+    if (!initialDecision.allow) return ok({ status: "policy_denied", reason: initialDecision.reason });
     // An unfunded address has no on-chain account, so simulation would fail with an opaque
     // error. Report the address and faucet instead.
     if (signer) {
       const { address, chainId, account } = await agentAccount();
-      if (address && ugnotBalance(account) === "0") {
+      if (address && account && ugnotBalance(account) === "0") {
         return ok({
           status: "needs_funding",
           intent: intent.summary,
@@ -168,14 +218,14 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           faucet: faucetFor(chainId),
           message:
             `The agent wallet ${address} needs gas before it can act. Offer the user to send a small ` +
-            `amount of GNOT to that address${fundingHint(chainId)}; ${GAS_ESTIMATE} is typically enough.`,
+            `amount of GNOT to that address${fundingHint(chainId)}; ${GAS_ESTIMATE} is typically enough.`
         });
       }
     }
 
     let preview: GnotxEnvelope;
     try {
-      preview = await simulate();
+      preview = await gnotx.simulateCall(call.pkgpath, call.func, call.args, call.send);
     } catch (e) {
       return ok({
         status: "simulate_failed",
@@ -184,16 +234,40 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         note: signer
           ? "Simulation failed, so the action was not checked against policy or sent to a signer."
           : "Simulation failed. Simulation requires a reachable signing service; set GNOPULSE_SIGNER " +
-            "once one is available.",
+            "once one is available."
       });
     }
 
+    if (preview.ok !== true)
+      return ok({
+        status: "simulate_failed",
+        reason: preview.log || "Simulation did not succeed",
+        simulate: preview
+      });
+    const limits = previewLimits(preview);
+    if (!limits)
+      return ok({
+        status: "simulate_failed",
+        reason:
+          "Simulation did not supply complete, consistent gas and storage cost bounds. Update the simulation backend."
+      });
+    intent.executionLimits = limits;
     const decision = await policy.check(intent);
     if (!decision.allow) {
-      return ok({ status: "policy_denied", reason: decision.reason, intent: intent.summary, simulate: preview });
+      return ok({
+        status: "policy_denied",
+        reason: decision.reason,
+        intent: intent.summary,
+        simulate: preview
+      });
     }
     if (!signer) {
-      return ok({ status: "execution_disabled", note: ENABLE_HINT, intent: intent.summary, simulate: preview });
+      return ok({
+        status: "execution_disabled",
+        note: ENABLE_HINT,
+        intent: intent.summary,
+        simulate: preview
+      });
     }
     if (signer.requiresApproval) {
       const pending = approvals.create(intent, preview);
@@ -202,12 +276,27 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         intent: intent.summary,
         simulate: preview,
         approval_token: pending.token,
+        ...(deps.approvalPublicKey
+          ? {
+              approval_challenge: approvalChallenge(
+                pending,
+                deps.agentId || "",
+                deps.chainId,
+                deps.agentAddress || ""
+              )
+            }
+          : {}),
         expires_in_seconds: approvals.ttlSeconds,
-        next: `Review the simulation result. To broadcast, call gno_confirm with token="${pending.token}".`,
+        next: `Review the simulation result. To broadcast, call gno_confirm with token="${pending.token}".`
       });
     }
     const result = await signer.execute(intent);
-    return ok({ status: "executed", intent: intent.summary, simulate: preview, result });
+    return ok({
+      status: "executed",
+      intent: intent.summary,
+      simulate: preview,
+      result
+    });
   }
 
   server.registerTool(
@@ -224,8 +313,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         pkgpath: z.string(),
         func: z.string(),
         args: z.array(z.string()).optional(),
-        send: z.string().optional(),
-      },
+        send: z.string().optional()
+      }
     },
     ({ pkgpath, func, args, send }) =>
       guard(async () => {
@@ -235,10 +324,10 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           func,
           args,
           send,
-          summary: `call ${pkgpath}.${func}(${(args ?? []).join(", ")})${send ? ` send ${send}` : ""}`,
+          summary: `call ${pkgpath}.${func}(${(args ?? []).join(", ")})${send ? ` send ${send}` : ""}`
         };
-        return propose(intent, () => gnotx.simulateCall(pkgpath, func, args, send));
-      }),
+        return propose(intent);
+      })
   );
 
   server.registerTool(
@@ -253,8 +342,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
       inputSchema: {
         token: z.string().describe("GRC20 token pkgpath"),
         spender: z.string().describe("address allowed to spend (router/pool)"),
-        amount: z.string().describe("allowance, raw units"),
-      },
+        amount: z.string().describe("allowance, raw units")
+      }
     },
     ({ token, spender, amount }) =>
       guard(async () => {
@@ -262,10 +351,10 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           kind: "approve",
           pkgpath: token,
           approve: { token, spender, amount },
-          summary: `approve ${token} spender=${spender} amount=${amount}`,
+          summary: `approve ${token} spender=${spender} amount=${amount}`
         };
-        return propose(intent, () => gnotx.simulateCall(token, "Approve", [spender, amount]));
-      }),
+        return propose(intent);
+      })
   );
 
   server.registerTool(
@@ -283,19 +372,27 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         amountIn: z.string().describe("exact input amount, raw units"),
         minOut: z.string().describe("minimum output (slippage floor), raw units"),
         fee: z.string().optional().describe("fee tier 100/500/3000/10000 (default 500)"),
-        deadlineSecs: z.number().int().optional().describe("seconds until expiry (default 120)"),
-      },
+        deadlineSecs: z.number().int().optional().describe("seconds until expiry (default 120)")
+      }
     },
     ({ tokenIn, tokenOut, amountIn, minOut, fee, deadlineSecs }) =>
       guard(async () => {
-        const swap = { tokenIn, tokenOut, amountIn, minOut, fee, deadlineSecs };
+        const swap = {
+          tokenIn,
+          tokenOut,
+          amountIn,
+          minOut,
+          fee,
+          deadlineSecs,
+          deadline: Math.floor(Date.now() / 1000) + (deadlineSecs ?? 120)
+        };
         const intent: Intent = {
           kind: "swap",
           swap,
-          summary: `swap ${amountIn} ${tokenIn} → ${tokenOut} (minOut ${minOut}, fee ${fee ?? "500"})`,
+          summary: `swap ${amountIn} ${tokenIn} → ${tokenOut} (minOut ${minOut}, fee ${fee ?? "500"})`
         };
-        return propose(intent, () => gnotx.simulateCall(GNOSWAP_ROUTER, "ExactInSwapRoute", swapCallArgs(swap)));
-      }),
+        return propose(intent);
+      })
   );
 
   server.registerTool(
@@ -311,12 +408,14 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         pkgpath: z
           .string()
           .optional()
-          .describe("intended path; must be address-namespaced, e.g. gno.land/r/<deployer>/mypkg"),
-      },
+          .describe("intended path; must be address-namespaced, e.g. gno.land/r/<deployer>/mypkg")
+      }
     },
     ({ deployer, pkgpath }) =>
       guard(async () => {
-        const signed = absentToNull(await rpc.qeval(`${CLA_REALM}.HasValidSignature(${JSON.stringify(deployer)})`));
+        const signed = absentToNull(
+          await rpc.qeval(`${CLA_REALM}.HasValidSignature(${JSON.stringify(deployer)})`)
+        );
         const hasSigned = signed?.includes("true") ?? false;
         if (!hasSigned) {
           return ok({
@@ -326,8 +425,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
             next: [
               `Read the current CLA hash: gno_render ${CLA_REALM}`,
               `Sign it: gno_call ${CLA_REALM}.Sign(<hash>) → gno_confirm`,
-              "Then re-run gno_deploy; it will report ready.",
-            ],
+              "Then re-run gno_deploy; it will report ready."
+            ]
           });
         }
         return ok({
@@ -338,10 +437,10 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
             cmd: `gnotx addpkg -pkgpath ${pkgpath ?? `gno.land/r/${deployer}/<pkg>`} -pkgdir <dir> -broadcast`,
             notes:
               "The path must be address-namespaced (gno.land/r/<deployer>/<pkg>). A gnomod.toml is added " +
-              "automatically, files are sorted, and the package name comes from the `package` clause.",
-          },
+              "automatically, files are sorted, and the package name comes from the `package` clause."
+          }
         });
-      }),
+      })
   );
 
   server.registerTool(
@@ -349,24 +448,121 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
     {
       title: "Confirm & broadcast",
       description:
-        "Broadcast a previously proposed action using its approval token (from gno_call, gno_approve, or " +
-        "gno_swap). This is the human-approval step: the signing service signs and sends the transaction.",
-      inputSchema: { token: z.string().describe("approval_token returned by a propose call") },
+        "Request client-side human consent for a proposed action. A proposal token is not approval. " +
+        "Requires MCP elicitation or a signed approval from a configured trusted client; unsupported clients never execute.",
+      inputSchema: {
+        token: z.string().describe("approval_token returned by a propose call")
+      }
     },
-    ({ token }) =>
+    ({ token }, extra) =>
       guard(async () => {
         if (!signer) return ok({ status: "execution_disabled", note: ENABLE_HINT });
         const pending = approvals.take(token);
         if (!pending) {
-          return ok({ status: "invalid_token", note: "Unknown or expired approval token; propose the action again." });
+          return ok({
+            status: "invalid_token",
+            note: "Unknown or expired approval token; propose the action again."
+          });
         }
         // Policy may have changed since the action was proposed.
         const decision = await policy.check(pending.intent);
         if (!decision.allow) {
-          return ok({ status: "policy_denied", reason: decision.reason, intent: pending.intent.summary });
+          return ok({
+            status: "policy_denied",
+            reason: decision.reason,
+            intent: pending.intent.summary
+          });
         }
+        const receipt = extra._meta?.[CLIENT_APPROVAL_META];
+        const identity = await agentAccount();
+        if (receipt !== undefined) {
+          if (
+            !deps.approvalPublicKey ||
+            !identity.address ||
+            !verifyClientApproval(
+              receipt,
+              approvalChallenge(pending, deps.agentId || "", identity.chainId, identity.address),
+              deps.approvalPublicKey
+            )
+          )
+            return ok({
+              status: "approval_denied",
+              reason: "Client authorization is invalid, expired, or does not match this transaction."
+            });
+        } else {
+          const elicitation = server.server.getClientCapabilities()?.elicitation;
+          if (!elicitation || (!("form" in elicitation) && Object.keys(elicitation).length !== 0)) {
+            return ok({
+              status: "approval_unavailable",
+              reason:
+                "This client cannot collect independent human consent. Use MCP elicitation or a configured trusted client authorization adapter."
+            });
+          }
+          let consent;
+          try {
+            consent = await server.server.elicitInput(
+              {
+                mode: "form",
+                message: approvalMessage(
+                  pending.intent,
+                  pending.preview as GnotxEnvelope,
+                  deps.agentId || "unknown",
+                  identity.chainId,
+                  identity.address || "unknown"
+                ),
+                requestedSchema: {
+                  type: "object",
+                  properties: {
+                    approve: {
+                      type: "boolean",
+                      title: "Yes, sign and send this transaction",
+                      description:
+                        "Check this box, then choose Accept. Accept alone does not authorize a transaction.",
+                      default: false
+                    }
+                  },
+                  required: ["approve"]
+                }
+              },
+              {
+                signal: extra.signal,
+                timeout: Math.max(1, pending.expiresAt - Date.now())
+              }
+            );
+          } catch {
+            return ok({
+              status: extra.signal.aborted
+                ? "approval_cancelled"
+                : Date.now() >= pending.expiresAt
+                  ? "approval_expired"
+                  : "approval_failed",
+              reason:
+                "Client approval did not complete. Nothing was signed or broadcast. Check the client's approval interface before proposing again."
+            });
+          }
+          if (consent.action !== "accept" || consent.content?.approve !== true)
+            return ok({
+              status: "approval_declined",
+              reason:
+                "Transaction not authorized. To authorize a new proposal, check the signing checkbox before choosing Accept."
+            });
+        }
+        if (extra.signal.aborted) return ok({ status: "approval_cancelled" });
+        if (Date.now() >= pending.expiresAt)
+          return ok({
+            status: "invalid_token",
+            note: "Approval expired; propose again."
+          });
+        const current = await policy.check(pending.intent);
+        if (!current.allow) return ok({ status: "policy_denied", reason: current.reason });
+        if (extra.signal.aborted) return ok({ status: "approval_cancelled" });
+        if (Date.now() >= pending.expiresAt) return ok({ status: "approval_expired" });
         const result = await signer.execute(pending.intent);
-        return ok({ status: "executed", intent: pending.intent.summary, result });
-      }),
+        return ok({
+          status: "executed",
+          intent: pending.intent.summary,
+          result
+        });
+      })
   );
 }

@@ -38,10 +38,15 @@ export async function run(fn) {
 
 /** Environment for a server under test: inherited GnoPulse/gno settings removed, network offline. */
 export function serverEnv(overrides = {}) {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([k]) => !/^(GNOPULSE_|GNOTX_|GNO_)/.test(k)),
-  );
-  return { ...env, GNO_RPC_URLS: OFFLINE, GNOPULSE_API_BASE: OFFLINE, ...overrides };
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GNOPULSE_|GNOTX_|GNO_)/.test(k)));
+  return {
+    ...env,
+    GNO_RPC_URLS: OFFLINE,
+    GNOPULSE_API_BASE: OFFLINE,
+    GNOPULSE_AGENT_ID: "e2e-agent",
+    GNOPULSE_AGENT_ADDRESS: "g1test",
+    ...overrides
+  };
 }
 
 /** Start a JSON HTTP mock on a random port. `handler(req, body)` returns the response object. */
@@ -50,11 +55,24 @@ export async function startMock(handler) {
     let body = "";
     for await (const chunk of req) body += chunk;
     res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(await handler(req, body ? JSON.parse(body) : undefined)));
+    let result = await handler(req, body ? JSON.parse(body) : undefined);
+    if (req.url === "/healthz")
+      result = {
+        ok: true,
+        chainid: "gnoland-1",
+        caller: "g1test",
+        unsigned_simulation: true,
+        execution_enabled: true,
+        ...(!result?.error && result)
+      };
+    res.end(JSON.stringify(result));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  return { url: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
+  return {
+    url: `http://127.0.0.1:${server.address().port}`,
+    close: () => server.close()
+  };
 }
 
 /** A free local TCP port. */
@@ -67,8 +85,11 @@ export async function freePort() {
 }
 
 /** Spawn the server over stdio and complete the MCP handshake. */
-export async function startStdioClient(env) {
-  const child = spawn(process.execPath, [SERVER_ENTRY], { stdio: ["pipe", "pipe", "inherit"], env });
+export async function startStdioClient(env, consent) {
+  const child = spawn(process.execPath, [SERVER_ENTRY], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env
+  });
   const pending = new Map();
   let nextId = 0;
   let buffer = "";
@@ -81,6 +102,12 @@ export async function startStdioClient(env) {
       buffer = buffer.slice(newline + 1);
       if (!line) continue;
       const msg = JSON.parse(line);
+      if (msg.method === "elicitation/create") {
+        Promise.resolve(consent?.(msg.params)).then((result) =>
+          send({ id: msg.id, result: result ?? { action: "decline" } })
+        );
+        continue;
+      }
       pending.get(msg.id)?.(msg);
       pending.delete(msg.id);
     }
@@ -96,8 +123,8 @@ export async function startStdioClient(env) {
 
   await request("initialize", {
     protocolVersion: "2024-11-05",
-    capabilities: {},
-    clientInfo: { name: "e2e", version: "0" },
+    capabilities: consent ? { elicitation: { form: {} } } : {},
+    clientInfo: { name: "e2e", version: "0" }
   });
   send({ method: "notifications/initialized" });
 
@@ -108,13 +135,16 @@ export async function startStdioClient(env) {
       const msg = await request("tools/call", { name, arguments: args });
       return JSON.parse(msg.result.content[0].text);
     },
-    close: () => child.kill(),
+    close: () => child.kill()
   };
 }
 
 /** Spawn the server expecting it to exit; resolves with the exit code and stderr. */
 export async function runToExit(env) {
-  const child = spawn(process.execPath, [SERVER_ENTRY], { stdio: ["ignore", "ignore", "pipe"], env });
+  const child = spawn(process.execPath, [SERVER_ENTRY], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env
+  });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr += d));
   const [code] = await once(child, "exit");

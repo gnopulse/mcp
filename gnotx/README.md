@@ -217,3 +217,17 @@ GNO Network General Public License v6 (GNGPL). gnotx links gno.land packages
 licensed under the GNGPL; see LICENSE.
 
 Built on gno.land (https://gno.land).
+
+## Unsigned previews and explicit execution permission
+
+Ordinary `call`, `swap` and `approve` previews use public account metadata and an invalid placeholder signature. They do not call a signing function or broadcast. Before execution, the RPC network must match the configured chain, unsigned simulation must succeed, and the account sequence must remain unchanged. A final unsigned preview also validates the estimated fee. MCP execution carries the approved gas/fee ceilings, and a larger estimate is rejected before signing. The final transaction is signed only for an explicit CLI `-broadcast` or enabled service execution request. Public metadata loading does not sign a password-validation transaction.
+
+`serve` defaults to execution disabled, even with a funded wallet. An owner must explicitly pass `-allow-execute` and configure a nonempty `GNOTX_SERVE_TOKEN` to permit `/execute`. The MCP additionally enforces its configured policy and client consent. Restrict this service to trusted local callers; its bearer credential authorizes the enabled execution endpoint.
+
+For a keyless, shared simulation backend use `serve -caller <public-default-address> -chainid <chain> -remotes <rpc>`. This mode never opens a keybase and refuses `-allow-execute`. `/simulate` accepts `caller` and optional `public_key` (compressed secp256k1 hex). A public key must match the caller and is needed when the chain has no published key. Every response identifies `simulation_mode: unsigned`; rejection never triggers a signed fallback. Health reports `unsigned_simulation` and `execution_enabled` capabilities. Older signing simulators are intentionally incompatible with the repaired MCP preview path.
+
+Unsigned preview is for ordinary realm calls. Non-crossing read functions use `vm/qeval`. Code-bearing `addpkg` uses the standalone deployment flow, may require a real signature during node simulation, and is not an unsigned MCP capability. Do not use deployment commands under a no-signing authorization.
+
+Unsigned previews retain `estimated_fee_ugnot` as the gas component and add `estimated_storage_deposit_ugnot`, `storage_deposit_limit_ugnot`, `estimated_storage_refund_ugnot` and `estimated_total_fee_ugnot`. The last field is gas plus the authorized storage ceiling, without subtracting refunds. `GNOPULSE_POLICY_MAX_FEE_UGNOT` bounds that combined amount; the separately configured native send cap still applies. These limits do not cap GRC20 movements or every possible contract effect.
+
+The proposal binds total fee, gas and storage ceilings. `/execute` requires `max_gas_wanted`, `max_fee_ugnot` (gas plus storage) and `max_storage_deposit_ugnot` together. The signing service re-simulates, rejects cost growth beyond consent, and writes the approved storage ceiling into the signed MsgCall.MaxDeposit. On-chain enforcement protects against storage growth after the final simulation; a rejected transaction can still consume its authorized gas fee. A zero MaxDeposit invokes the chain default, so a zero-storage estimate reserves and discloses one ugnot instead. Missing, malformed, inconsistent or overflowing cost estimates cannot authorize signing. Gas-only older backends must be upgraded with the MCP client.

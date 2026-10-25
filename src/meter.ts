@@ -1,8 +1,8 @@
 /**
  * Usage metering for tools that call the chain or signer directly and so bypass
  * the REST API's own metering. Before such a tool runs, the caller's key is
- * checked against POST /api/mcp/meter. Metering fails open: if the endpoint is
- * unreachable the call proceeds.
+ * checked against POST /api/mcp/meter. Hosted requests fail closed when usage authorization is unavailable. Local stdio
+ * retains its public-RPC outage behavior.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "./config.js";
@@ -13,19 +13,28 @@ export class Meter {
   /** Returns null if the call may proceed, or the reason it was rejected. */
   async check(tool: string): Promise<string | null> {
     // Without a per-caller key there is nothing to meter.
-    if (!this.cfg.apiKey) return null;
+    if (!this.cfg.apiKey)
+      return this.cfg.transport === "http" && this.cfg.requireApiKey ? "API key required" : null;
     let resp: Response;
     try {
       resp = await fetch(`${this.cfg.apiBase}/api/mcp/meter`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-API-Key": this.cfg.apiKey },
         body: JSON.stringify({ tool }),
-        signal: AbortSignal.timeout(this.cfg.timeoutMs),
+        signal: AbortSignal.timeout(this.cfg.timeoutMs)
       });
     } catch {
-      return null;
+      return this.cfg.transport === "http"
+        ? "Usage authorization is temporarily unavailable. Retry shortly"
+        : null;
     }
-    if (resp.ok) return null;
+    if (resp.ok) {
+      if (this.cfg.transport !== "http") return null;
+      const verdict = (await resp.json().catch(() => null)) as { ok?: unknown; allowed?: unknown } | null;
+      return verdict?.ok === true && verdict?.allowed === true
+        ? null
+        : "Usage authorization did not return a valid allowance. Retry shortly";
+    }
     const body = (await resp.json().catch(() => null)) as { reason?: unknown } | null;
     return body?.reason ? String(body.reason) : `rate or quota limit (HTTP ${resp.status})`;
   }
@@ -41,8 +50,8 @@ export function metered(server: McpServer, meter: Meter): McpServer {
       const denied = await meter.check(name);
       if (denied) {
         return {
-          content: [{ type: "text", text: `Error: ${denied}. Upgrade your plan or wait for the window to reset.` }],
-          isError: true,
+          content: [{ type: "text", text: `Error: ${denied}.` }],
+          isError: true
         };
       }
       return handler(args, extra);
@@ -55,6 +64,6 @@ export function metered(server: McpServer, meter: Meter): McpServer {
       if (prop === "registerTool") return registerTool;
       const value = Reflect.get(target, prop, receiver);
       return typeof value === "function" ? value.bind(target) : value;
-    },
+    }
   });
 }

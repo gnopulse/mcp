@@ -4,7 +4,13 @@ import assert from "node:assert/strict";
 import { ConfigurablePolicy, loadPolicy, parseUgnot, PolicyConfigError } from "../dist/signer/policy.js";
 
 const base = { defaultAllow: true, allowRealms: [], denyRealms: [], allowFuncs: [], denyFuncs: [] };
-const callIntent = (over = {}) => ({ kind: "call", pkgpath: "gno.land/r/demo/x", func: "Ping", summary: "t", ...over });
+const callIntent = (over = {}) => ({
+  kind: "call",
+  pkgpath: "gno.land/r/demo/x",
+  func: "Ping",
+  summary: "t",
+  ...over
+});
 
 test("parseUgnot", () => {
   assert.equal(parseUgnot("1000ugnot"), 1000n);
@@ -57,7 +63,12 @@ test("default-deny with an allowlist allows listed realms", () => {
 });
 
 test("default-deny with an allowlist still enforces the send cap", () => {
-  const p = new ConfigurablePolicy({ ...base, defaultAllow: false, allowRealms: ["gno.land/r/x"], maxSendUgnot: 1000n });
+  const p = new ConfigurablePolicy({
+    ...base,
+    defaultAllow: false,
+    allowRealms: ["gno.land/r/x"],
+    maxSendUgnot: 1000n
+  });
   assert.equal(p.check(callIntent({ pkgpath: "gno.land/r/x", send: "500ugnot" })).allow, true);
   assert.equal(p.check(callIntent({ pkgpath: "gno.land/r/x", send: "2000ugnot" })).allow, false);
 });
@@ -82,21 +93,27 @@ test("fees-only: allows zero-send calls, denies value transfers", () => {
 
 test("approve intent is checked against function rules", () => {
   const p = new ConfigurablePolicy({ ...base, denyFuncs: ["Approve"] });
-  const intent = { kind: "approve", pkgpath: "gno.land/r/x", approve: { token: "gno.land/r/x", spender: "g1", amount: "1" }, summary: "t" };
+  const intent = {
+    kind: "approve",
+    pkgpath: "gno.land/r/x",
+    approve: { token: "gno.land/r/x", spender: "g1", amount: "1" },
+    summary: "t"
+  };
   assert.equal(p.check(intent).allow, false);
 });
 
 test("deny lists and expiry alone are not restrictive", () => {
-  const p = new ConfigurablePolicy({ ...base, denyRealms: ["gno.land/r/x"], denyFuncs: ["Transfer"], expiresAt: 2000 });
+  const p = new ConfigurablePolicy({
+    ...base,
+    denyRealms: ["gno.land/r/x"],
+    denyFuncs: ["Transfer"],
+    expiresAt: 2000
+  });
   assert.equal(p.restrictive, false);
 });
 
 test("allowlists and default-deny are each restrictive", () => {
-  for (const over of [
-    { allowRealms: ["gno.land/r/x"] },
-    { allowFuncs: ["Ping"] },
-    { defaultAllow: false },
-  ]) {
+  for (const over of [{ allowRealms: ["gno.land/r/x"] }, { allowFuncs: ["Ping"] }, { defaultAllow: false }]) {
     assert.equal(new ConfigurablePolicy({ ...base, ...over }).restrictive, true, Object.keys(over)[0]);
   }
 });
@@ -108,12 +125,16 @@ test("loadPolicy parses numeric variables", () => {
   assert.equal(loadPolicy({ GNOPULSE_POLICY_ALLOW_FUNCS: "Ping" }).restrictive, true);
 });
 
-for (const name of ["GNOPULSE_POLICY_EXPIRES_AT", "GNOPULSE_POLICY_EXPIRES_IN", "GNOPULSE_POLICY_MAX_SEND_UGNOT"]) {
+for (const name of [
+  "GNOPULSE_POLICY_EXPIRES_AT",
+  "GNOPULSE_POLICY_EXPIRES_IN",
+  "GNOPULSE_POLICY_MAX_SEND_UGNOT"
+]) {
   test(`loadPolicy rejects a malformed ${name}`, () => {
     for (const value of ["abc", "1.5", "-1", "5ugnot"]) {
       assert.throws(
         () => loadPolicy({ [name]: value }),
-        (e) => e instanceof PolicyConfigError && e.message.startsWith(`${name}="${value}" is invalid`),
+        (e) => e instanceof PolicyConfigError && e.message.startsWith(`${name}="${value}" is invalid`)
       );
     }
   });
@@ -144,4 +165,66 @@ test("feesOnly does not stop a GRC20 transfer, which is why it is not a bound", 
   const p = new ConfigurablePolicy({ ...base, feesOnly: true });
   const transfer = callIntent({ pkgpath: "gno.land/r/demo/tok", func: "Transfer", send: "" });
   assert.equal(p.check(transfer).allow, true);
+});
+
+const swapIntent = {
+  kind: "swap",
+  swap: { tokenIn: "a", tokenOut: "b", amountIn: "1", minOut: "1", deadline: 1999999999 },
+  summary: "swap"
+};
+const router = "gno.land/r/gnoswap/router";
+test("swap policy checks the actual router and function", () => {
+  assert.equal(new ConfigurablePolicy({ ...base, denyRealms: [router] }).check(swapIntent).allow, false);
+  assert.equal(
+    new ConfigurablePolicy({ ...base, denyFuncs: ["ExactInSwapRoute"] }).check(swapIntent).allow,
+    false
+  );
+  assert.equal(
+    new ConfigurablePolicy({
+      ...base,
+      defaultAllow: false,
+      allowRealms: [router],
+      allowFuncs: ["ExactInSwapRoute"]
+    }).check(swapIntent).allow,
+    true
+  );
+  assert.equal(
+    new ConfigurablePolicy({ ...base, allowRealms: ["gno.land/r/other"] }).check(swapIntent).allow,
+    false
+  );
+  assert.equal(
+    new ConfigurablePolicy({ ...base, denyRealms: [router] }).check({
+      ...swapIntent,
+      pkgpath: "gno.land/r/safe",
+      func: "Safe"
+    }).allow,
+    false
+  );
+});
+
+test("autonomous grant needs all bounds and enforces gas, fees and expiry", () => {
+  let now = 100;
+  const cfg = {
+    ...base,
+    allowRealms: ["gno.land/r/demo/x"],
+    allowFuncs: ["Ping"],
+    maxSendUgnot: 0n,
+    maxFeeUgnot: 100n,
+    maxGasWanted: 1000,
+    expiresAt: 110
+  };
+  const p = new ConfigurablePolicy(cfg, () => now);
+  assert.equal(p.boundedAutonomy, true);
+  for (const k of ["maxSendUgnot", "maxFeeUgnot", "maxGasWanted", "expiresAt"]) {
+    const changed = { ...cfg };
+    delete changed[k];
+    assert.equal(new ConfigurablePolicy(changed, () => now).boundedAutonomy, false);
+  }
+  assert.equal(p.check(callIntent({ executionLimits: { gasWanted: 1000, feeUgnot: "100" } })).allow, true);
+  assert.equal(p.check(callIntent({ executionLimits: { gasWanted: 1001, feeUgnot: "100" } })).allow, false);
+  assert.equal(p.check(callIntent({ executionLimits: { gasWanted: 1000, feeUgnot: "101" } })).allow, false);
+  now = 110;
+  assert.equal(p.boundedAutonomy, false);
+  assert.equal(p.check(callIntent()).allow, false);
+  assert.throws(() => loadPolicy({ GNOPULSE_POLICY_MAX_GAS: "9007199254740992" }), PolicyConfigError);
 });

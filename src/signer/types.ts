@@ -4,8 +4,7 @@
  * Execution tools never hold a key. They build an `Intent`, check it against the
  * `PolicyEngine`, and pass it to the active `Signer`. Custody backends differ only in the
  * Signer implementation:
- *   - requiresApproval = true: the tool returns a preview and a token; a human calls
- *     gno_confirm before anything is broadcast.
+ *   - requiresApproval = true: the tool returns a preview and a token; gno_confirm requests explicit human consent through the client before execution.
  *   - requiresApproval = false: the intent is broadcast as soon as policy allows it.
  */
 
@@ -23,11 +22,15 @@ export interface SwapParams {
   route?: string;
   /** Seconds until the swap expires. Defaults to 120. */
   deadlineSecs?: number;
+  /** Absolute deadline fixed before preview and human consent. */
+  deadline?: number;
 }
 
 /** A proposed on-chain action, produced by an execution tool before signing. */
 export interface Intent {
   kind: "call" | "swap" | "approve" | "deploy";
+  /** feeUgnot caps gas plus storage; refunds do not reduce this bound. */
+  executionLimits?: { gasWanted: number; feeUgnot: string; storageDepositUgnot: string };
   pkgpath?: string;
   func?: string;
   args?: string[];
@@ -66,5 +69,8 @@ export interface Signer {
 
 /** Policy that denies every intent. */
 export const DENY_ALL: PolicyEngine = {
-  check: () => ({ allow: false, reason: "no PolicyEngine configured; execution disabled (simulate-only)" }),
+  check: () => ({
+    allow: false,
+    reason: "no PolicyEngine configured; execution disabled (simulate-only)"
+  })
 };

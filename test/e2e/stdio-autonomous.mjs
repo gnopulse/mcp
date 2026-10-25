@@ -5,7 +5,20 @@ import { check, freePort, run, runToExit, serverEnv, startMock, startStdioClient
 await run(async () => {
   let executeHits = 0;
   const signer = await startMock((req) => {
-    if (req.url === "/simulate") return { mode: "simulate", ok: true, gas_used: 100000 };
+    if (req.url === "/simulate")
+      return {
+        mode: "simulate",
+        ok: true,
+        gas_used: 100000,
+        gas_wanted: 130000,
+        extra: {
+          estimated_fee_ugnot: "100000",
+          estimated_storage_deposit_ugnot: "0",
+          storage_deposit_limit_ugnot: "1",
+          estimated_storage_refund_ugnot: "0",
+          estimated_total_fee_ugnot: "100001"
+        }
+      };
     if (req.url === "/execute") {
       executeHits++;
       return { mode: "broadcast", ok: true, tx_hash: "TX1", height: 7 };
@@ -19,12 +32,20 @@ await run(async () => {
       env({
         GNOPULSE_SIGNER: "microservice",
         GNOPULSE_POLICY_ALLOW_REALMS: "gno.land/r/demo/ok",
-        GNOPULSE_POLICY_MAX_SEND_UGNOT: "1000000",
-      }),
+        GNOPULSE_POLICY_ALLOW_FUNCS: "Ping",
+        GNOPULSE_POLICY_MAX_FEE_UGNOT: "100001",
+        GNOPULSE_POLICY_MAX_GAS: "130000",
+        GNOPULSE_POLICY_EXPIRES_IN: "60",
+        GNOPULSE_POLICY_MAX_SEND_UGNOT: "1000000"
+      })
     );
     try {
       const result = await client.callTool("gno_call", { pkgpath: "gno.land/r/demo/ok", func: "Ping" });
-      check("microservice executes immediately", result.status === "executed" && executeHits === 1, result.status);
+      check(
+        "microservice executes immediately",
+        result.status === "executed" && executeHits === 1,
+        result.status
+      );
       check("microservice returns the tx hash", result.result?.txHash === "TX1");
     } finally {
       client.close();
@@ -32,13 +53,74 @@ await run(async () => {
 
     for (const kind of ["microservice", "tee"]) {
       const { code, stderr } = await runToExit(env({ GNOPULSE_SIGNER: kind }));
-      check(`${kind} with an unbounded policy refuses to start`, code === 1 && /does not bound/.test(stderr), stderr.trim());
+      check(
+        `${kind} with an unbounded policy refuses to start`,
+        code === 1 && /does not bound/.test(stderr),
+        stderr.trim()
+      );
+    }
+
+    for (const bounds of [
+      { GNOPULSE_POLICY_MAX_FEE_UGNOT: "99999" },
+      { GNOPULSE_POLICY_MAX_GAS: "129999" }
+    ]) {
+      const limited = await startStdioClient(
+        env({
+          GNOPULSE_SIGNER: "microservice",
+          GNOPULSE_POLICY_ALLOW_REALMS: "gno.land/r/demo/ok",
+          GNOPULSE_POLICY_ALLOW_FUNCS: "Ping",
+          GNOPULSE_POLICY_MAX_SEND_UGNOT: "0",
+          GNOPULSE_POLICY_MAX_FEE_UGNOT: "100001",
+          GNOPULSE_POLICY_MAX_GAS: "130000",
+          GNOPULSE_POLICY_EXPIRES_IN: "60",
+          ...bounds
+        })
+      );
+      try {
+        check(
+          "over-limit preview never executes",
+          (await limited.callTool("gno_call", { pkgpath: "gno.land/r/demo/ok", func: "Ping" })).status ===
+            "policy_denied" && executeHits === 1
+        );
+      } finally {
+        limited.close();
+      }
+    }
+
+    for (const omitted of [
+      "GNOPULSE_POLICY_ALLOW_REALMS",
+      "GNOPULSE_POLICY_ALLOW_FUNCS",
+      "GNOPULSE_POLICY_MAX_SEND_UGNOT",
+      "GNOPULSE_POLICY_MAX_FEE_UGNOT",
+      "GNOPULSE_POLICY_MAX_GAS",
+      "GNOPULSE_POLICY_EXPIRES_IN"
+    ]) {
+      const grant = {
+        GNOPULSE_SIGNER: "microservice",
+        GNOPULSE_POLICY_ALLOW_REALMS: "gno.land/r/demo/ok",
+        GNOPULSE_POLICY_ALLOW_FUNCS: "Ping",
+        GNOPULSE_POLICY_MAX_SEND_UGNOT: "0",
+        GNOPULSE_POLICY_MAX_FEE_UGNOT: "100001",
+        GNOPULSE_POLICY_MAX_GAS: "130000",
+        GNOPULSE_POLICY_EXPIRES_IN: "60"
+      };
+      delete grant[omitted];
+      const result = await runToExit(env(grant));
+      check(`autonomous startup rejects missing ${omitted}`, result.code === 1);
     }
 
     const denyOnly = await runToExit(
-      env({ GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_DENY_REALMS: "gno.land/r/x", GNOPULSE_POLICY_EXPIRES_IN: "60" }),
+      env({
+        GNOPULSE_SIGNER: "microservice",
+        GNOPULSE_POLICY_DENY_REALMS: "gno.land/r/x",
+        GNOPULSE_POLICY_EXPIRES_IN: "60"
+      })
     );
-    check("deny list and expiry alone refuse to start", denyOnly.code === 1 && /does not bound/.test(denyOnly.stderr), denyOnly.stderr.trim());
+    check(
+      "deny list and expiry alone refuse to start",
+      denyOnly.code === 1 && /does not bound/.test(denyOnly.stderr),
+      denyOnly.stderr.trim()
+    );
 
     // A native-ugnot bound is not a bound on what may be called: a GRC20 transfer is a call with
     // an empty send and passes both of these.
@@ -47,11 +129,13 @@ await run(async () => {
       check(
         `${Object.keys(over)[0]} alone refuses to start`,
         nativeOnly.code === 1 && /does not bound/.test(nativeOnly.stderr),
-        nativeOnly.stderr.trim(),
+        nativeOnly.stderr.trim()
       );
     }
 
-    const badCap = await runToExit(env({ GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_MAX_SEND_UGNOT: "5gnot" }));
+    const badCap = await runToExit(
+      env({ GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_MAX_SEND_UGNOT: "5gnot" })
+    );
     const named = /GNOPULSE_POLICY_MAX_SEND_UGNOT="5gnot" is invalid/.test(badCap.stderr);
     check("malformed policy variable fails naming it", badCap.code === 1 && named, badCap.stderr.trim());
 
@@ -62,8 +146,8 @@ await run(async () => {
           GNOPULSE_SIGNER: kind,
           GNOPULSE_POLICY_DEFAULT: "deny",
           GNOPULSE_MCP_TRANSPORT: "http",
-          GNOPULSE_MCP_PORT: String(await freePort()),
-        }),
+          GNOPULSE_MCP_PORT: String(await freePort())
+        })
       );
       const refused = overHttp.code === 1 && /not allowed over HTTP/.test(overHttp.stderr);
       check(`${kind} over HTTP refuses to start`, refused, overHttp.stderr.trim());

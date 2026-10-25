@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -40,6 +41,7 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/crypto"
 	"github.com/gnolang/gno/tm2/pkg/crypto/bip39"
 	"github.com/gnolang/gno/tm2/pkg/crypto/keys"
+	"github.com/gnolang/gno/tm2/pkg/crypto/secp256k1"
 	_ "github.com/gnolang/gno/tm2/pkg/sdk/bank" // registers /bank.MsgSend for amino decoding in verify
 	"github.com/gnolang/gno/tm2/pkg/std"
 )
@@ -80,6 +82,9 @@ type config struct {
 	remote, chainID, home, key, password string
 	gasFee                               string
 	gasWanted                            int64
+	maxGasWanted                         int64
+	maxFeeUgnot                          int64
+	maxStorageDepositUgnot               int64
 	memo                                 string
 	broadcast                            bool
 }
@@ -291,9 +296,10 @@ func buildSigner(c *config) (gnoclient.SignerFromKeybase, string, error) {
 		Password: c.password,
 		ChainID:  c.chainID,
 	}
-	if err := signer.Validate(); err != nil {
-		return signer, "", fmt.Errorf("signer: %w (is key %q in the keybase, chainid set?)", err, c.key)
+	if c.chainID == "" {
+		return signer, "", fmt.Errorf("chain id is required")
 	}
+	// Signer.Validate signs a test transaction. Loading public metadata must not sign.
 	info, err := signer.Info()
 	if err != nil {
 		return signer, "", fmt.Errorf("key info: %w", err)
@@ -626,10 +632,15 @@ func runAddpkg(cli *gnoclient.Client, c *config, addr string, msg vm.MsgAddPacka
 
 // callReq is the JSON body accepted by /simulate and /execute.
 type callReq struct {
-	Pkgpath string   `json:"pkgpath"`
-	Func    string   `json:"func"`
-	Args    []string `json:"args"`
-	Send    string   `json:"send"`
+	Pkgpath                string   `json:"pkgpath"`
+	Func                   string   `json:"func"`
+	Args                   []string `json:"args"`
+	Send                   string   `json:"send"`
+	Caller                 string   `json:"caller,omitempty"`
+	PublicKey              string   `json:"public_key,omitempty"`
+	MaxGasWanted           int64    `json:"max_gas_wanted,omitempty"`
+	MaxFeeUgnot            string   `json:"max_fee_ugnot,omitempty"`
+	MaxStorageDepositUgnot string   `json:"max_storage_deposit_ugnot,omitempty"`
 }
 
 // maxRequestBytes caps the body of a POST request to serve.
@@ -648,7 +659,7 @@ func checkServeToken(token string, insecureNoToken bool) error {
 type runFunc func(req callReq, broadcast bool) (res *result, remote string, code int, err error)
 
 // newServeMux returns the serve routes. An empty token disables authentication.
-func newServeMux(token string, health func() map[string]any, run runFunc) *http.ServeMux {
+func newServeMux(token string, health func() map[string]any, run runFunc, allowExecute bool) *http.ServeMux {
 	handle := func(broadcast bool) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -658,6 +669,10 @@ func newServeMux(token string, health func() map[string]any, run runFunc) *http.
 			}
 			if !authorized(r, token) {
 				writeErr(w, http.StatusUnauthorized, "missing/invalid bearer token")
+				return
+			}
+			if broadcast && !allowExecute {
+				writeErr(w, http.StatusForbidden, "execution disabled; owner must explicitly enable -allow-execute")
 				return
 			}
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
@@ -726,6 +741,8 @@ func cmdServe(args []string) error {
 		"listen address; a non-loopback address exposes the signer to the network")
 	remotesFlag := fs.String("remotes", env("GNOTX_REMOTES", ""),
 		"comma-separated RPC mirrors for failover; overrides -remote when set")
+	allowExecute := fs.Bool("allow-execute", false, "permit authenticated /execute requests; disabled by default")
+	callerFlag := fs.String("caller", "", "public caller address for a keyless simulation service")
 	insecureNoToken := fs.Bool("insecure-no-token", false,
 		"allow running without GNOTX_SERVE_TOKEN (no authentication)")
 	if err := fs.Parse(args); err != nil {
@@ -733,6 +750,9 @@ func cmdServe(args []string) error {
 	}
 
 	token := os.Getenv("GNOTX_SERVE_TOKEN")
+	if *allowExecute && token == "" {
+		return fmt.Errorf("execution requires an authenticated service token")
+	}
 	if err := checkServeToken(token, *insecureNoToken); err != nil {
 		return err
 	}
@@ -748,7 +768,18 @@ func cmdServe(args []string) error {
 	var caller string
 	var callerAddr crypto.Address
 	backend := "keybase"
-	if provider := os.Getenv("GNOTX_TEE_PROVIDER"); provider != "" {
+	if *callerFlag != "" {
+		caller = *callerFlag
+		var err error
+		callerAddr, err = bech32(caller)
+		if err != nil {
+			return err
+		}
+		if *allowExecute {
+			return fmt.Errorf("keyless caller mode cannot allow execution")
+		}
+		backend = "public-only"
+	} else if provider := os.Getenv("GNOTX_TEE_PROVIDER"); provider != "" {
 		var err error
 		if ext, err = buildExternalSigner(provider); err != nil {
 			return err
@@ -772,7 +803,7 @@ func cmdServe(args []string) error {
 		if err != nil {
 			return fmt.Errorf("rpc client for %q: %w", r, err)
 		}
-		if ext != nil {
+		if ext != nil || *callerFlag != "" {
 			clients[i] = &gnoclient.Client{RPCClient: rpc}
 		} else {
 			clients[i] = &gnoclient.Client{Signer: signer, RPCClient: rpc}
@@ -803,7 +834,15 @@ func cmdServe(args []string) error {
 	var broadcastMu sync.Mutex
 
 	run := func(body callReq, broadcast bool) (*result, string, int, error) {
-		msg, err := mkMsg(caller, body.Pkgpath, body.Func, body.Args, body.Send)
+		requestCaller := caller
+		if body.Caller != "" {
+			if *callerFlag == "" && body.Caller != caller {
+				return nil, "", http.StatusBadRequest, fmt.Errorf("caller must match the agent wallet")
+			}
+			requestCaller = body.Caller
+		}
+
+		msg, err := mkMsg(requestCaller, body.Pkgpath, body.Func, body.Args, body.Send)
 		if err != nil {
 			return nil, "", http.StatusBadRequest, err
 		}
@@ -811,16 +850,38 @@ func cmdServe(args []string) error {
 		if broadcast {
 			broadcastMu.Lock()
 			defer broadcastMu.Unlock()
-			res, err := serveExecute(clients, remotes, pick, c, caller, callerAddr, label, msg, ext)
+			rc := *c
+			rc.broadcast = true
+			rc.maxGasWanted = body.MaxGasWanted
+			if err := applyExecutionBounds(&rc, body); err != nil {
+				return nil, "", http.StatusBadRequest, err
+			}
+			res, err := serveExecute(clients, remotes, pick, &rc, caller, callerAddr, label, msg, ext)
 			return res, "", http.StatusInternalServerError, err
 		}
 		cli, remote, ok := pick()
 		if !ok {
 			return nil, "", http.StatusServiceUnavailable, fmt.Errorf("no healthy RPC mirror among %v", remotes)
 		}
-		rc := *c
-		rc.broadcast = false
-		res, err := execMsg(cli, &rc, caller, label, msg, ext)
+		var pub crypto.PubKey
+		if body.PublicKey != "" {
+			raw, err := hex.DecodeString(body.PublicKey)
+			if err != nil || len(raw) != 33 {
+				return nil, remote, http.StatusBadRequest, fmt.Errorf("public_key must be a compressed secp256k1 public key in hex")
+			}
+			var key secp256k1.PubKeySecp256k1
+			copy(key[:], raw)
+			pub = key
+		} else if ext != nil {
+			pub = ext.PubKey()
+		} else if *callerFlag == "" {
+			info, err := signer.Info()
+			if err != nil {
+				return nil, remote, http.StatusInternalServerError, err
+			}
+			pub = info.GetPubKey()
+		}
+		res, _, err := simulateUnsigned(cli, c, requestCaller, label, msg, pub)
 		return res, remote, http.StatusInternalServerError, err
 	}
 
@@ -828,6 +889,7 @@ func cmdServe(args []string) error {
 		_, remote, ok := pick()
 		return map[string]any{
 			"ok": ok, "caller": caller, "chainid": c.chainID,
+			"unsigned_simulation": true, "execution_enabled": *allowExecute, "keyless": backend == "public-only",
 			"remotes": remotes, "healthy_remote": remote,
 		}
 	}
@@ -836,7 +898,7 @@ func cmdServe(args []string) error {
 		*addr, caller, c.chainID, backend, token != "", remotes)
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           newServeMux(token, health, run),
+		Handler:           newServeMux(token, health, run, *allowExecute),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      130 * time.Second, // broadcasts wait for commit
 	}
@@ -1004,78 +1066,164 @@ func runMsg(cli *gnoclient.Client, c *config, addr, label string, msg vm.MsgCall
 	return nil
 }
 
-// prepareCall queries the account, simulates to estimate gas, and returns a
-// broadcast-ready signed tx, the sequence it was signed at, and the simulation
-// result. When ext is non-nil it signs with the external signer.
-func prepareCall(cli *gnoclient.Client, c *config, addr, label string, msg vm.MsgCall, ext ExternalSigner) (
-	signed *std.Tx, seq uint64, r *result, simFailed bool, err error) {
-	var callerAddr crypto.Address
-	if ext != nil {
-		callerAddr = ext.PubKey().Address()
-	} else {
-		info, ierr := cli.Signer.Info()
-		if ierr != nil {
-			return nil, 0, nil, false, ierr
-		}
-		callerAddr = info.GetAddress()
-	}
-	acct, _, err := cli.QueryAccount(callerAddr)
+// simulateUnsigned uses public account metadata only. It never calls a signer.
+// Placeholder signatures cannot authorize a broadcast. Nodes that require a real
+// signature reject the preview; there is deliberately no signed fallback.
+func simulateUnsigned(cli *gnoclient.Client, c *config, addr, label string, msg vm.MsgCall, pub crypto.PubKey) (*result, uint64, error) {
+	status, err := cli.RPCClient.Status(context.Background(), nil)
 	if err != nil {
-		return nil, 0, nil, false, fmt.Errorf("query account (key funded on chain?): %w", err)
+		return nil, 0, fmt.Errorf("verify simulation network: %w", err)
 	}
-	seq = acct.Sequence
+	if status.NodeInfo.Network != c.chainID {
+		return nil, 0, fmt.Errorf("RPC chain does not match configured chain")
+	}
+	if msg.Caller.String() != addr {
+		return nil, 0, fmt.Errorf("message caller does not match preview caller")
+	}
+	caller, err := bech32(addr)
+	if err != nil {
+		return nil, 0, err
+	}
+	acct, _, err := cli.QueryAccount(caller)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query simulation caller (account must exist): %w", err)
+	}
+	if pub == nil {
+		pub = acct.GetPubKey()
+	}
+	if pub == nil {
+		return nil, 0, fmt.Errorf("caller has no published public key; supply public_key for its first transaction")
+	}
+	if pub.Address() != caller {
+		return nil, 0, fmt.Errorf("public key does not match simulation caller")
+	}
+	gas := c.gasWanted
+	if gas <= 0 {
+		gas = probeGasWanted
+	}
+	if c.maxStorageDepositUgnot > 0 {
+		msg.MaxDeposit = std.Coins{{Denom: "ugnot", Amount: c.maxStorageDepositUgnot}}
+	}
+	tx, err := gnoclient.NewCallTx(gnoclient.BaseTxCfg{GasFee: probeFee(c.gasFee), GasWanted: gas, Memo: c.memo}, msg)
+	if err != nil {
+		return nil, 0, err
+	}
+	tx.Signatures = []std.Signature{{PubKey: pub, Signature: make([]byte, 64)}}
+	sim, err := cli.SimulateResult(tx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("unsigned simulation unavailable: %w", err)
+	}
+	wanted := c.gasWanted
+	if wanted <= 0 {
+		wanted = withHeadroom(sim.GasUsed)
+	}
+	fee, err := std.ParseCoin(c.feeFor(wanted))
+	if err != nil {
+		return nil, 0, fmt.Errorf("simulation fee: %w", err)
+	}
+	deposit, _, err := storageCosts(sim.Events)
+	if err != nil {
+		return nil, 0, err
+	}
+	limit := c.maxStorageDepositUgnot
+	if limit == 0 {
+		limit = deposit
+		// Zero means the chain's default, not a zero ceiling. Reserve one ugnot.
+		if limit == 0 {
+			limit = 1
+		}
+	}
+	msg.MaxDeposit = std.Coins{{Denom: "ugnot", Amount: limit}}
+	if sim.Error == nil {
+		tx, err = gnoclient.NewCallTx(gnoclient.BaseTxCfg{GasFee: fee.String(), GasWanted: wanted, Memo: c.memo}, msg)
+		if err != nil {
+			return nil, 0, err
+		}
+		tx.Signatures = []std.Signature{{PubKey: pub, Signature: make([]byte, 64)}}
+		sim, err = cli.SimulateResult(tx)
+		if err != nil {
+			return nil, 0, fmt.Errorf("unsigned fee validation unavailable: %w", err)
+		}
+	}
+	deposit, refund, err := storageCosts(sim.Events)
+	if err != nil {
+		return nil, 0, err
+	}
+	if sim.Error == nil && deposit > limit {
+		return nil, 0, fmt.Errorf("storage deposit exceeds the transaction ceiling")
+	}
+	total, err := addCost(fee.Amount, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	r := &result{Mode: "simulate", Caller: addr, Func: label, OK: sim.Error == nil, GasUsed: sim.GasUsed, GasWanted: wanted, ReturnVal: decodeReturn(sim.Data), Log: strings.TrimSpace(sim.Log), Extra: map[string]string{
+		"simulation_mode": "unsigned", "chain_id": c.chainID,
+		"estimated_fee_ugnot":             strconv.FormatInt(fee.Amount, 10),
+		"estimated_storage_deposit_ugnot": strconv.FormatInt(deposit, 10),
+		"storage_deposit_limit_ugnot":     strconv.FormatInt(limit, 10),
+		"estimated_storage_refund_ugnot":  strconv.FormatInt(refund, 10),
+		"estimated_total_fee_ugnot":       strconv.FormatInt(total, 10),
+	}}
+	return r, acct.Sequence, nil
+}
 
-	sign := func(gasWanted int64, gasFee string) (*std.Tx, error) {
-		base := gnoclient.BaseTxCfg{GasFee: gasFee, GasWanted: gasWanted, Memo: c.memo,
-			AccountNumber: acct.AccountNumber, SequenceNumber: acct.Sequence}
-		tx, terr := gnoclient.NewCallTx(base, msg)
-		if terr != nil {
-			return nil, terr
+// prepareCall signs only an explicitly authorized execution after a successful
+// unsigned simulation. Preview-only and failed calls never invoke SignTx.
+func prepareCall(cli *gnoclient.Client, c *config, addr, label string, msg vm.MsgCall, ext ExternalSigner) (*std.Tx, uint64, *result, bool, error) {
+	var pub crypto.PubKey
+	if ext != nil {
+		pub = ext.PubKey()
+	} else {
+		info, err := cli.Signer.Info()
+		if err != nil {
+			return nil, 0, nil, false, err
 		}
-		if ext != nil {
-			if serr := signTxExternal(tx, c.chainID, acct.AccountNumber, acct.Sequence, ext); serr != nil {
-				return nil, serr
-			}
-			return tx, nil
-		}
-		s, serr := cli.SignTx(*tx, acct.AccountNumber, acct.Sequence)
-		if serr != nil {
-			return nil, fmt.Errorf("sign (wrong -password?): %w", serr)
-		}
-		return s, nil
+		pub = info.GetPubKey()
 	}
-
-	probeGas := c.gasWanted
-	if probeGas <= 0 {
-		probeGas = probeGasWanted
-	}
-	s, err := sign(probeGas, probeFee(c.gasFee))
+	r, seq, err := simulateUnsigned(cli, c, addr, label, msg, pub)
 	if err != nil {
 		return nil, seq, nil, false, err
 	}
-	sim, err := cli.Simulate(s)
+	if !r.OK || !c.broadcast {
+		return nil, seq, r, !r.OK, nil
+	}
+	if c.maxGasWanted > 0 && r.GasWanted > c.maxGasWanted {
+		return nil, seq, r, false, fmt.Errorf("gas estimate exceeds the approved preview; propose again")
+	}
+	fee, err := strconv.ParseInt(r.Extra["estimated_total_fee_ugnot"], 10, 64)
 	if err != nil {
-		return nil, seq, nil, false, fmt.Errorf("simulate: %w", err)
+		return nil, seq, r, false, fmt.Errorf("invalid preview fee")
+	}
+	if c.maxFeeUgnot > 0 && fee > c.maxFeeUgnot {
+		return nil, seq, r, false, fmt.Errorf("gas and storage cost exceeds the approved preview; propose again")
 	}
 
-	r = &result{Caller: addr, Func: label, GasUsed: sim.GasUsed}
-	simFailed = sim.Error != nil
-	if simFailed {
-		r.Log = strings.TrimSpace(sim.Log)
-	}
-	r.ReturnVal = decodeReturn(sim.Data)
-	gasWanted := c.gasWanted
-	if gasWanted <= 0 {
-		gasWanted = withHeadroom(sim.GasUsed)
-	}
-	r.GasWanted = gasWanted
-
-	// Re-sign with the estimated gas and its fee; this is the tx that gets broadcast.
-	signed, err = sign(gasWanted, c.feeFor(gasWanted))
+	caller, err := bech32(addr)
 	if err != nil {
-		return nil, seq, r, simFailed, err
+		return nil, seq, r, false, err
 	}
-	return signed, seq, r, simFailed, nil
+	acct, _, err := cli.QueryAccount(caller)
+	if err != nil {
+		return nil, seq, r, false, err
+	}
+	if acct.Sequence != seq {
+		return nil, seq, r, false, fmt.Errorf("account changed during simulation; propose again")
+	}
+	storageLimit, err := strconv.ParseInt(r.Extra["storage_deposit_limit_ugnot"], 10, 64)
+	if err != nil || storageLimit <= 0 {
+		return nil, seq, r, false, fmt.Errorf("invalid storage ceiling")
+	}
+	msg.MaxDeposit = std.Coins{{Denom: "ugnot", Amount: storageLimit}}
+	tx, err := gnoclient.NewCallTx(gnoclient.BaseTxCfg{GasFee: c.feeFor(r.GasWanted), GasWanted: r.GasWanted, Memo: c.memo, AccountNumber: acct.AccountNumber, SequenceNumber: seq}, msg)
+	if err != nil {
+		return nil, seq, r, false, err
+	}
+	if ext != nil {
+		err = signTxExternal(tx, c.chainID, acct.AccountNumber, seq, ext)
+	} else {
+		tx, err = cli.SignTx(*tx, acct.AccountNumber, seq)
+	}
+	return tx, seq, r, false, err
 }
 
 // execMsg simulates msg and, when c.broadcast is set, broadcasts it once.

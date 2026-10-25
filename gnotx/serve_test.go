@@ -21,7 +21,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *[]callReq) {
 		got = append(got, req)
 		return &result{Mode: "simulate", Caller: "g1test", Func: req.Pkgpath + "." + req.Func, OK: true}, "", 0, nil
 	}
-	srv := httptest.NewServer(newServeMux(testToken, health, run))
+	srv := httptest.NewServer(newServeMux(testToken, health, run, true))
 	t.Cleanup(srv.Close)
 	return srv, &got
 }
@@ -152,5 +152,23 @@ func TestDefHome(t *testing.T) {
 	t.Setenv("GNOTX_HOME", "/tmp/k")
 	if got := defHome(); got != "/tmp/k" {
 		t.Fatalf("GNOTX_HOME override: %q", got)
+	}
+}
+
+func TestServeDefaultCannotExecute(t *testing.T) {
+	hits := 0
+	run := func(req callReq, broadcast bool) (*result, string, int, error) {
+		hits++
+		return &result{OK: true}, "", 0, nil
+	}
+	server := httptest.NewServer(newServeMux(testToken, func() map[string]any { return map[string]any{"ok": true} }, run, false))
+	defer server.Close()
+	response := post(t, server.URL+"/execute", "Bearer "+testToken, "application/json", validBody)
+	if response.StatusCode != http.StatusForbidden || hits != 0 {
+		t.Fatal("disabled execution reached the transaction handler")
+	}
+	response = post(t, server.URL+"/simulate", "Bearer "+testToken, "application/json", validBody)
+	if response.StatusCode != http.StatusOK || hits != 1 {
+		t.Fatal("disabled execution should retain unsigned preview")
 	}
 }

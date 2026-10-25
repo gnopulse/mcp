@@ -18,6 +18,7 @@
  * Malformed numeric values throw a PolicyConfigError naming the variable.
  */
 import type { Intent, PolicyDecision, PolicyEngine } from "./types.js";
+import { targetForIntent } from "./call.js";
 
 export interface PolicyConfig {
   defaultAllow: boolean;
@@ -26,6 +27,8 @@ export interface PolicyConfig {
   allowFuncs: string[];
   denyFuncs: string[];
   maxSendUgnot?: bigint;
+  maxFeeUgnot?: bigint;
+  maxGasWanted?: number;
   /** Unix seconds after which every intent is denied. Undefined means no expiry. */
   expiresAt?: number;
   /** Realm calls are allowed but the send amount must be zero. */
@@ -39,21 +42,13 @@ export function parseUgnot(send: string | undefined): bigint | null {
   return m ? BigInt(m[1]) : null;
 }
 
-function realmOf(intent: Intent): string | undefined {
-  return intent.pkgpath ?? intent.approve?.token;
-}
-
-function funcOf(intent: Intent): string | undefined {
-  return intent.func ?? (intent.kind === "approve" ? "Approve" : undefined);
-}
-
 const deny = (reason: string): PolicyDecision => ({ allow: false, reason });
 
 export class ConfigurablePolicy implements PolicyEngine {
   /** `now` returns unix seconds; injectable for tests. */
   constructor(
     private readonly cfg: PolicyConfig,
-    private readonly now: () => number = () => Date.now() / 1000,
+    private readonly now: () => number = () => Date.now() / 1000
   ) {}
 
   /**
@@ -72,12 +67,40 @@ export class ConfigurablePolicy implements PolicyEngine {
     return c.allowRealms.length > 0 || c.allowFuncs.length > 0 || !c.defaultAllow;
   }
 
+  get boundedAutonomy(): boolean {
+    const c = this.cfg;
+    return (
+      c.allowRealms.length > 0 &&
+      c.allowFuncs.length > 0 &&
+      c.maxSendUgnot !== undefined &&
+      c.maxFeeUgnot !== undefined &&
+      c.maxGasWanted !== undefined &&
+      c.expiresAt !== undefined &&
+      c.expiresAt > this.now()
+    );
+  }
+
+  describe() {
+    const c = this.cfg;
+    return {
+      default: c.defaultAllow ? "allow" : "deny",
+      allow_realms: [...c.allowRealms],
+      deny_realms: [...c.denyRealms],
+      allow_functions: [...c.allowFuncs],
+      deny_functions: [...c.denyFuncs],
+      max_send_ugnot: c.maxSendUgnot?.toString() ?? null,
+      max_fee_ugnot: c.maxFeeUgnot?.toString() ?? null,
+      max_gas: c.maxGasWanted ?? null,
+      expires_at: c.expiresAt ?? null,
+      fees_only: c.feesOnly === true
+    };
+  }
+
   check(intent: Intent): PolicyDecision {
     const c = this.cfg;
-    const realm = realmOf(intent);
-    const func = funcOf(intent);
+    const { pkgpath: realm, func } = targetForIntent(intent);
 
-    if (c.expiresAt !== undefined && this.now() > c.expiresAt) {
+    if (c.expiresAt !== undefined && this.now() >= c.expiresAt) {
       return deny("policy expired (session grant ended)");
     }
     if (c.feesOnly) {
@@ -104,6 +127,13 @@ export class ConfigurablePolicy implements PolicyEngine {
       }
     }
 
+    if (intent.executionLimits) {
+      if (c.maxGasWanted !== undefined && intent.executionLimits.gasWanted > c.maxGasWanted)
+        return deny("Estimated gas exceeds the configured transaction limit.");
+      if (c.maxFeeUgnot !== undefined && BigInt(intent.executionLimits.feeUgnot) > c.maxFeeUgnot)
+        return deny("Estimated gas and storage cost exceeds the configured transaction limit.");
+    }
+
     // An intent that passed a configured allowlist is allowed even under default-deny;
     // the default applies only when no allowlist is configured.
     const hasAllowlist = c.allowRealms.length > 0 || c.allowFuncs.length > 0;
@@ -124,7 +154,12 @@ type Env = Record<string, string | undefined>;
 
 function csv(env: Env, name: string): string[] {
   const value = env[name];
-  return value ? value.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  return value
+    ? value
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
 }
 
 /** The variable as a non-negative integer string, undefined when unset or empty. */
@@ -136,11 +171,25 @@ function uintVar(env: Env, name: string, expected: string): string | undefined {
 }
 
 function envExpiry(env: Env): number | undefined {
-  const at = uintVar(env, "GNOPULSE_POLICY_EXPIRES_AT", "a unix time in seconds");
-  const inSecs = uintVar(env, "GNOPULSE_POLICY_EXPIRES_IN", "a number of seconds");
-  if (at !== undefined) return Number(at);
-  if (inSecs !== undefined) return Math.floor(Date.now() / 1000) + Number(inSecs);
-  return undefined;
+  const at = uintVar(env, "GNOPULSE_POLICY_EXPIRES_AT", "a positive safe integer unix time");
+  const seconds = uintVar(env, "GNOPULSE_POLICY_EXPIRES_IN", "a positive safe integer duration");
+  const value = at ?? seconds;
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  const name = at !== undefined ? "GNOPULSE_POLICY_EXPIRES_AT" : "GNOPULSE_POLICY_EXPIRES_IN";
+  const expires = at !== undefined ? parsed : Math.floor(Date.now() / 1000) + parsed;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || !Number.isSafeInteger(expires))
+    throw new PolicyConfigError(name, value, "a positive safe integer");
+  return expires;
+}
+
+function gasLimit(env: Env): number | undefined {
+  const value = uintVar(env, "GNOPULSE_POLICY_MAX_GAS", "a positive safe integer");
+  if (value === undefined) return undefined;
+  const gas = Number(value);
+  if (!Number.isSafeInteger(gas) || gas <= 0)
+    throw new PolicyConfigError("GNOPULSE_POLICY_MAX_GAS", value, "a positive safe integer");
+  return gas;
 }
 
 /** Build the policy from the environment. Throws PolicyConfigError on a malformed value. */
@@ -153,7 +202,12 @@ export function loadPolicy(env: Env = process.env): ConfigurablePolicy {
     allowFuncs: csv(env, "GNOPULSE_POLICY_ALLOW_FUNCS"),
     denyFuncs: csv(env, "GNOPULSE_POLICY_DENY_FUNCS"),
     maxSendUgnot: maxSend !== undefined ? BigInt(maxSend) : undefined,
+    maxFeeUgnot:
+      uintVar(env, "GNOPULSE_POLICY_MAX_FEE_UGNOT", "an integer amount of ugnot") !== undefined
+        ? BigInt(env.GNOPULSE_POLICY_MAX_FEE_UGNOT!.trim())
+        : undefined,
+    maxGasWanted: gasLimit(env),
     expiresAt: envExpiry(env),
-    feesOnly: env.GNOPULSE_POLICY_FEES_ONLY === "1",
+    feesOnly: env.GNOPULSE_POLICY_FEES_ONLY === "1"
   });
 }

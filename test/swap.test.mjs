@@ -5,7 +5,12 @@ import { swapCallArgs, GNOSWAP_ROUTER } from "../dist/signer/execute.js";
 import { withApiKey } from "../dist/config.js";
 
 test("swapCallArgs builds router.ExactInSwapRoute args", () => {
-  const args = swapCallArgs({ tokenIn: "A", tokenOut: "B", amountIn: "100", minOut: "9" });
+  const args = swapCallArgs({
+    tokenIn: "A",
+    tokenOut: "B",
+    amountIn: "100",
+    minOut: "9"
+  });
   assert.equal(args.length, 8);
   assert.equal(args[0], "A");
   assert.equal(args[1], "B");
@@ -18,8 +23,26 @@ test("swapCallArgs builds router.ExactInSwapRoute args", () => {
 });
 
 test("swapCallArgs honors fee and an explicit route", () => {
-  assert.equal(swapCallArgs({ tokenIn: "A", tokenOut: "B", amountIn: "1", minOut: "1", fee: "3000" })[3], "A:B:3000");
-  assert.equal(swapCallArgs({ tokenIn: "A", tokenOut: "B", amountIn: "1", minOut: "1", route: "A:C:100*POOL*C:B:500" })[3], "A:C:100*POOL*C:B:500");
+  assert.equal(
+    swapCallArgs({
+      tokenIn: "A",
+      tokenOut: "B",
+      amountIn: "1",
+      minOut: "1",
+      fee: "3000"
+    })[3],
+    "A:B:3000"
+  );
+  assert.equal(
+    swapCallArgs({
+      tokenIn: "A",
+      tokenOut: "B",
+      amountIn: "1",
+      minOut: "1",
+      route: "A:C:100*POOL*C:B:500"
+    })[3],
+    "A:C:100*POOL*C:B:500"
+  );
 });
 
 test("GNOSWAP_ROUTER is the router path", () => {
@@ -31,4 +54,15 @@ test("withApiKey overrides only when a key is given", () => {
   assert.equal(withApiKey(cfg, "caller").apiKey, "caller");
   assert.equal(withApiKey(cfg, undefined).apiKey, "server");
   assert.equal(withApiKey(cfg, undefined), cfg);
+});
+
+test("approved swap deadline is stable across later execution", () => {
+  const swap = {
+    tokenIn: "a",
+    tokenOut: "b",
+    amountIn: "1",
+    minOut: "1",
+    deadline: 1700000000
+  };
+  assert.equal(swapCallArgs(swap)[6], "1700000000");
 });

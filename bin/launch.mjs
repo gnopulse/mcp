@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // `gnopulse-mcp` launcher. Resolves the gnotx signer binary, creates the agent key on first run,
-// starts an isolated `gnotx serve`, then runs the MCP server over stdio with
-// human approval required for every write. The key stays in the signer process.
+// starts an isolated execution-disabled `gnotx serve` when an agent ID is configured,
+// then runs the MCP server over stdio. Signing requires explicit configuration.
+// The key stays in the signer process.
 // stdout belongs to the MCP JSON-RPC stream, so this script logs only to stderr.
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
@@ -18,10 +19,13 @@ const DIST = path.join(PKG_ROOT, "dist");
 const MCP_ENTRY = path.join(DIST, "index.js");
 
 const env = process.env;
-const HOME_DIR = env.GNOPULSE_AGENT_HOME || path.join(os.homedir(), ".gnopulse-agent");
+const AGENT_ID = env.GNOPULSE_AGENT_ID;
+const CHAIN_ID = env.GNO_CHAIN_ID || "gnoland-1";
+const HOME_ROOT = env.GNOPULSE_AGENT_HOME || path.join(os.homedir(), ".gnopulse-agent");
+const HOME_DIR = path.join(HOME_ROOT, "agents", CHAIN_ID, AGENT_ID || "unconfigured");
+const SIGNER_KIND = env.GNOPULSE_SIGNER || "none";
 const KEY_NAME = env.GNOPULSE_AGENT_KEY || "gpagent";
 let signerAddr = env.GNOPULSE_SIGNER_ADDR;
-const CHAIN_ID = env.GNO_CHAIN_ID || "gnoland-1";
 const MAX_SEND = env.GNOPULSE_POLICY_MAX_SEND_UGNOT || "5000000";
 const ALLOW_REALMS = env.GNOPULSE_POLICY_ALLOW_REALMS || "";
 const SIGNER_LOG = path.join(HOME_DIR, "signer.log");
@@ -70,12 +74,16 @@ function resolveGnotx() {
   }
   const osName = PLATFORMS[process.platform];
   const arch = ARCHES[process.arch];
-  if (!osName || !arch) die(`unsupported platform ${process.platform}/${process.arch}; set GNOTX_BIN to a gnotx you built`);
+  if (!osName || !arch)
+    die(`unsupported platform ${process.platform}/${process.arch}; set GNOTX_BIN to a gnotx you built`);
 
   const pkg = `@gnopulse/gnotx-${osName}-${arch}`;
   let bin;
   try {
-    bin = path.join(path.dirname(require.resolve(`${pkg}/package.json`)), osName === "windows" ? "gnotx.exe" : "gnotx");
+    bin = path.join(
+      path.dirname(require.resolve(`${pkg}/package.json`)),
+      osName === "windows" ? "gnotx.exe" : "gnotx"
+    );
   } catch {
     die(`${pkg} is not installed; reinstall @gnopulse/mcp or set GNOTX_BIN`);
   }
@@ -86,21 +94,31 @@ function resolveGnotx() {
 // Read a secret from `file`, creating it (mode 0600) on first use.
 function ensureSecret(file, length) {
   if (fs.existsSync(file)) return fs.readFileSync(file, "utf8").trim();
-  const secret = randomBytes(length).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, length);
+  const secret = randomBytes(length)
+    .toString("base64")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, length);
   const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}`;
   try {
     fs.writeFileSync(temporary, secret, { mode: 0o600, flag: "wx" });
-    try { fs.linkSync(temporary, file); }
-    catch (error) { if (error.code !== "EEXIST") throw error; }
+    try {
+      fs.linkSync(temporary, file);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
     return fs.readFileSync(file, "utf8").trim();
-  } finally { fs.rmSync(temporary, { force: true }); }
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
 }
 
 // The /healthz body of a signer listening on signerAddr, or null if none answers.
 // Sends no token, so it is safe against an unknown process.
 async function signerHealth() {
   try {
-    const resp = await fetch(`http://${signerAddr}/healthz`, { signal: AbortSignal.timeout(2500) });
+    const resp = await fetch(`http://${signerAddr}/healthz`, {
+      signal: AbortSignal.timeout(2500)
+    });
     return resp.ok ? await resp.json() : null;
   } catch {
     return null;
@@ -112,18 +130,20 @@ function assertOwnSigner(health, address) {
   if (health.caller !== address) {
     die(
       `${signerAddr} is taken by another signer (caller ${health.caller ?? "unknown"}, expected ${address}). ` +
-        "Stop it or set GNOPULSE_SIGNER_ADDR to a free port.",
+        "Stop it or set GNOPULSE_SIGNER_ADDR to a free port."
     );
   }
   if (health.chainid !== CHAIN_ID) {
-    die(`signer on ${signerAddr} is on chain ${health.chainid ?? "unknown"}, expected ${CHAIN_ID}. Stop it and retry.`);
+    die(
+      `signer on ${signerAddr} is on chain ${health.chainid ?? "unknown"}, expected ${CHAIN_ID}. Stop it and retry.`
+    );
   }
 }
 
 function ensureKey(gnotx, password) {
   const result = spawnSync(gnotx, ["keygen", "-home", HOME_DIR, "-key", KEY_NAME], {
     encoding: "utf8",
-    env: { ...env, GNOTX_PASSWORD: password },
+    env: { ...env, GNOTX_PASSWORD: password }
   });
   if (result.status !== 0) die(`keygen failed: ${(result.stderr || result.stdout || "").trim()}`);
   let address;
@@ -140,16 +160,36 @@ async function ensureSigner(gnotx, password, token, remotes, address) {
   const existing = await signerHealth();
   if (existing) {
     assertOwnSigner(existing, address);
-    die(`signer already running on ${signerAddr}; choose a free GNOPULSE_SIGNER_ADDR. ` +
-        "Launcher-owned signers cannot be shared between clients.");
+    die(
+      `signer already running on ${signerAddr}; choose a free GNOPULSE_SIGNER_ADDR. ` +
+        "Launcher-owned signers cannot be shared between clients."
+    );
   }
   log(`starting signer on ${signerAddr}`);
   const logFd = fs.openSync(SIGNER_LOG, "a");
-  const args = ["serve", "-key", KEY_NAME, "-home", HOME_DIR, "-addr", signerAddr, "-remotes", remotes, "-chainid", CHAIN_ID];
+  const args = [
+    "serve",
+    "-key",
+    KEY_NAME,
+    "-home",
+    HOME_DIR,
+    "-addr",
+    signerAddr,
+    "-remotes",
+    remotes,
+    "-chainid",
+    CHAIN_ID
+  ];
+  if (SIGNER_KIND !== "none") args.push("-allow-execute");
   // Keep ownership so EOF, startup errors and signals can stop our signer.
   ownedSigner = spawn(gnotx, args, {
     stdio: ["ignore", logFd, logFd],
-    env: { ...env, GNOTX_PASSWORD: password, GNOTX_SERVE_TOKEN: token, GNOTX_GAS_FEE: "auto" },
+    env: {
+      ...env,
+      GNOTX_PASSWORD: password,
+      GNOTX_SERVE_TOKEN: token,
+      GNOTX_GAS_FEE: "auto"
+    }
   });
   fs.closeSync(logFd);
   ownedSigner.on("error", () => die("could not start the signer"));
@@ -181,12 +221,28 @@ async function privateSignerAddress() {
 
 async function main() {
   if (!fs.existsSync(MCP_ENTRY)) die(`MCP server not built at ${MCP_ENTRY}`);
-  if (env.GNOPULSE_SIGNER === "none") {
-    const child = spawn(process.execPath, [MCP_ENTRY], { stdio: "inherit", env });
+  if (!["none", "user-approval", "microservice", "tee"].includes(SIGNER_KIND))
+    die("Unknown GNOPULSE_SIGNER mode.");
+  if (!AGENT_ID && SIGNER_KIND !== "none") die("Set a distinct GNOPULSE_AGENT_ID before enabling signing.");
+  if (AGENT_ID && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(AGENT_ID))
+    die("GNOPULSE_AGENT_ID must be 1-64 lowercase letters, digits, underscores or hyphens.");
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(CHAIN_ID)) die("Invalid GNO_CHAIN_ID for wallet storage.");
+  if (!AGENT_ID && SIGNER_KIND === "none") {
+    const child = spawn(process.execPath, [MCP_ENTRY], {
+      stdio: "inherit",
+      env
+    });
     mcpChild = child;
     child.on("error", () => die("could not start the MCP server"));
     child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
     return;
+  }
+  if (SIGNER_KIND === "microservice" || SIGNER_KIND === "tee") {
+    const { loadPolicy } = await import(pathToFileURL(path.join(DIST, "signer/policy.js")).href);
+    if (!loadPolicy(env).boundedAutonomy)
+      die(
+        "Autonomous signing requires explicit realm/function allowlists, native-send/fee/gas limits and a future expiry."
+      );
   }
   signerAddr ||= await privateSignerAddress();
   fs.mkdirSync(HOME_DIR, { recursive: true, mode: 0o700 });
@@ -201,22 +257,23 @@ async function main() {
   await ensureSigner(gnotx, password, token, remotes, address);
 
   log(
-    `agent wallet: ${address} (chain ${CHAIN_ID}). Fund it with GNOT to let the agent transact; ` +
-      "each write is previewed and waits for your confirmation.",
+    `agent wallet: ${address} (agent ${AGENT_ID}, chain ${CHAIN_ID}, signing ${SIGNER_KIND}). ` +
+      "Funding does not grant execution permission."
   );
 
   const mcp = spawn(process.execPath, [MCP_ENTRY], {
     stdio: "inherit",
     env: {
       ...env,
-      GNOPULSE_SIGNER: env.GNOPULSE_SIGNER || "user-approval",
+      GNOPULSE_SIGNER: SIGNER_KIND,
+      GNOPULSE_AGENT_ADDRESS: address,
       GNOPULSE_POLICY_DEFAULT: env.GNOPULSE_POLICY_DEFAULT || (ALLOW_REALMS ? "deny" : "allow"),
       GNOPULSE_POLICY_ALLOW_REALMS: ALLOW_REALMS,
       GNOPULSE_POLICY_MAX_SEND_UGNOT: MAX_SEND,
       GNO_CHAIN_ID: CHAIN_ID,
       GNOTX_SERVICE_URL: `http://${signerAddr}`,
-      GNOTX_SERVICE_TOKEN: token,
-    },
+      GNOTX_SERVICE_TOKEN: token
+    }
   });
   mcpChild = mcp;
   mcp.on("error", () => die("could not start the MCP server"));
