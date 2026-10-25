@@ -1,6 +1,6 @@
 {
   "name": "@gnopulse/mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "GnoPulse MCP server for gno.land agents: read, analytics, and policy-gated execution tools.",
   "keywords": [
     "mcp",
@@ -44,8 +44,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.23.8"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

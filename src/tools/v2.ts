@@ -75,20 +75,27 @@ export function registerV2Tools(server: McpServer, api: ApiClient): void {
     "gno_wash_trades",
     {
       title: "Wash trades",
-      description: "Detected wash-trading activity.",
-      inputSchema: { limit: limitParam() },
+      description: "Transaction-netted round-trip activity. Heuristic only, not proof of wash trading or common ownership.",
+      inputSchema: { limit: limitParam(), days: z.union([z.literal(1), z.literal(7), z.literal(30)]).optional(), offset: z.number().int().min(0).max(100000).optional() },
     },
-    ({ limit }) => guard(async () => ok((await api.getV2("wash-trades", { limit })).data)),
+    ({ limit, days, offset }) => guard(async () => ok((await api.getV2("wash-trades", { limit, days, offset })).data)),
   );
 
   server.registerTool(
     "gno_swap_signals",
     {
       title: "Swap signals",
-      description: "Swap-derived trading signals: tick crossings and price impact.",
-      inputSchema: { limit: limitParam() },
+      description: "Settled swap events with price impact. Page with cursor=next_cursor; offset is retained for compatibility. Optionally filter by pool or signing wallet.",
+      inputSchema: { limit: limitParam(), cursor: z.string().max(2048).optional(), offset: z.number().int().min(0).max(100000).optional(), trader: z.string().optional(), pool: z.string().optional() },
     },
-    ({ limit }) => guard(async () => ok((await api.getV2("signals/swaps", { limit })).data)),
+    ({ limit, cursor, offset, trader, pool }) => guard(async () => {
+      if (cursor && offset) throw new Error("Use cursor or offset, not both.");
+      const { data } = await api.getV2("signals/swaps", { limit, before: cursor, offset, trader, pool });
+      if (cursor && !Object.prototype.hasOwnProperty.call(data ?? {}, "next_cursor")) {
+        throw new Error("This API does not support settled-swap cursor paging. Use a compatible API release or restart with offset paging.");
+      }
+      return ok(data);
+    }),
   );
 
   // Pools

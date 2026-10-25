@@ -58,6 +58,8 @@ export interface ExecutionDeps {
   approvals: ApprovalStore;
   /** Configured chain id, used when the signing service does not report one. */
   chainId: string;
+  /** HTTP exposes reads and simulation, never execution or confirmation tools. */
+  readOnly?: boolean;
 }
 
 function envList(name: string): string[] {
@@ -150,6 +152,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         }
       }),
   );
+
+  if (deps.readOnly) return;
 
   async function propose(intent: Intent, simulate: () => Promise<GnotxEnvelope>): Promise<ToolResult> {
     // An unfunded address has no on-chain account, so simulation would fail with an opaque

@@ -45,6 +45,7 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
     signer: deps.signer,
     approvals: deps.approvals,
     chainId: cfg.chainId,
+    readOnly: cfg.transport === "http",
   });
 
   return server;

@@ -30,6 +30,10 @@ export interface V2Page<T = any> {
   stats?: unknown;
   by_collection?: unknown;
   total?: number;
+  limit?: number;
+  offset?: number;
+  next_offset?: number | null;
+  quota?: Record<string, string>;
 }
 
 type Params = Record<string, unknown>;
@@ -38,6 +42,7 @@ interface RawResponse {
   status: number;
   ok: boolean;
   body: string;
+  quota: Record<string, string>;
 }
 
 export class ApiClient {
@@ -46,7 +51,7 @@ export class ApiClient {
   /** GET /api/v2/<path> and unwrap the envelope. Throws ApiError on a v2 error. */
   async getV2<T = any>(path: string, params?: Params): Promise<V2Result<T>> {
     const clean = path.replace(/^\/+/, "");
-    const { status, ok, body } = await this.request(this.url(`/api/v2/${clean}`, params));
+    const { status, ok, body, quota } = await this.request(this.url(`/api/v2/${clean}`, params));
 
     let parsed: any;
     try {
@@ -61,7 +66,9 @@ export class ApiClient {
       throw new ApiError(`${error.code ?? "error"}: ${error.message ?? "unknown"}`, status, error.code);
     }
     if (!ok) throw new ApiError(`v2 ${clean}: HTTP ${status}: ${body.slice(0, 200)}`, status);
-    return { data: parsed?.data, meta: parsed?.meta ?? {} };
+    const nested = parsed?.data?.error;
+    if (nested) throw new ApiError(typeof nested === "string" ? nested : JSON.stringify(nested), status);
+    return { data: parsed?.data, meta: { ...parsed?.meta, quota } };
   }
 
   /** v2 list: rows plus `next_cursor` / `has_more` so the agent can page. */
@@ -74,14 +81,20 @@ export class ApiClient {
       ...(meta.stats ? { stats: meta.stats } : {}),
       ...(meta.by_collection ? { by_collection: meta.by_collection } : {}),
       ...(meta.total != null ? { total: meta.total } : {}),
+      ...(meta.limit != null ? { limit: meta.limit } : {}),
+      ...(meta.offset != null ? { offset: meta.offset,
+        next_offset: meta.has_more ? meta.offset + (data?.length ?? 0) : null } : {}),
+      quota: meta.quota,
     };
   }
 
   /** GET a legacy v1 route. Prefer getV2. */
   async get(path: string, params?: Params): Promise<any> {
-    const { status, ok, body } = await this.request(this.url(path.startsWith("/") ? path : `/${path}`, params));
+    const { status, ok, body, quota } = await this.request(this.url(path.startsWith("/") ? path : `/${path}`, params));
     if (!ok) throw new ApiError(`GET ${path}: HTTP ${status}: ${body.slice(0, 300)}`, status);
-    return body ? JSON.parse(body) : null;
+    const parsed = body ? JSON.parse(body) : null;
+    if (parsed?.error) throw new ApiError(typeof parsed.error === "string" ? parsed.error : JSON.stringify(parsed.error), status);
+    return parsed;
   }
 
   private url(path: string, params?: Params): URL {
@@ -97,6 +110,10 @@ export class ApiClient {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.cfg.apiKey) headers["X-API-Key"] = this.cfg.apiKey;
     const resp = await fetch(url, { headers, signal: AbortSignal.timeout(this.cfg.timeoutMs) });
-    return { status: resp.status, ok: resp.ok, body: await resp.text() };
+    const quota: Record<string, string> = {};
+    resp.headers.forEach((value, name) => {
+      if (name.startsWith("x-quota-") || name.startsWith("x-ratelimit-") || name === "retry-after") quota[name] = value;
+    });
+    return { status: resp.status, ok: resp.ok, body: await resp.text(), quota };
   }
 }

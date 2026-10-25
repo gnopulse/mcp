@@ -10,6 +10,12 @@ import { guard, ok, pathSegment as seg } from "./util.js";
 const limitParam = (max: number) => z.number().int().min(1).max(max).optional();
 
 export function registerReadTools(server: McpServer, api: ApiClient): void {
+  server.registerTool("gno_api_usage", {
+    title: "API quota",
+    description: "Read current quota headers through one standard block-list request. This request consumes its normal cost units.",
+    inputSchema: {},
+  }, () => guard(async () => ok((await api.getV2("blocks", { limit: 1 })).meta.quota)));
+
   // Chain data
 
   server.registerTool(
@@ -56,14 +62,15 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
       title: "Get events",
       description: "Emitted Gno events grouped by realm and type, with filters.",
       inputSchema: {
+        offset: z.number().int().min(0).max(100000).optional(),
         type: z.string().optional().describe("event type/name"),
         app: z.string().optional().describe("app label"),
         q: z.string().optional().describe("free-text (realm/pkgpath)"),
         limit: limitParam(200).default(50),
       },
     },
-    ({ type, app, q, limit }) =>
-      guard(async () => ok(await api.listV2("events", { event_type: type, app, q, limit }))),
+    ({ type, app, q, limit, offset }) =>
+      guard(async () => ok(await api.listV2("events", { event_type: type, app, q, limit, offset }))),
   );
 
   server.registerTool(
@@ -98,10 +105,11 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
       description: "Holder distribution for a GRC20 token.",
       inputSchema: {
         token: z.string().describe("GRC20 token pkgpath"),
+        offset: z.number().int().min(0).max(100000).optional(),
         limit: limitParam(500).default(100),
       },
     },
-    ({ token, limit }) => guard(async () => ok(await api.listV2(`tokens/${seg(token)}/holders`, { limit }))),
+    ({ token, limit, offset }) => guard(async () => ok(await api.listV2(`tokens/${seg(token)}/holders`, { limit, offset }))),
   );
 
   server.registerTool(
@@ -137,9 +145,9 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
       description:
         "GnoSwap pools with TVL, volume, and APR. For a single pool use gno_pool_depth, " +
         "gno_pool_lp_providers, or gno_ohlcv.",
-      inputSchema: { limit: limitParam(500) },
+      inputSchema: { limit: limitParam(500), offset: z.number().int().min(0).max(100000).optional() },
     },
-    ({ limit }) => guard(async () => ok(await api.listV2("pools", { limit }))),
+    ({ limit, offset }) => guard(async () => ok(await api.listV2("pools", { limit, offset }))),
   );
 
   // Analytics
@@ -158,10 +166,10 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
     "gno_mev",
     {
       title: "MEV activity",
-      description: "Detected MEV activity: sandwiches and arbitrage.",
-      inputSchema: { limit: limitParam(200) },
+      description: "Same-pool, same-block sandwich-pattern candidates. Not general MEV or arbitrage detection.",
+      inputSchema: { limit: limitParam(1000), days: z.union([z.literal(1), z.literal(7), z.literal(30)]).optional(), offset: z.number().int().min(0).max(100000).optional() },
     },
-    ({ limit }) => guard(async () => ok((await api.getV2("mev", { limit })).data)),
+    ({ limit, days, offset }) => guard(async () => ok((await api.getV2("mev", { limit, days, offset })).data)),
   );
 
   server.registerTool(

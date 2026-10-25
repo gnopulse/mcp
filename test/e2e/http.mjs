@@ -36,7 +36,10 @@ async function startHttpServer(env) {
 }
 
 await run(async () => {
-  const api = await startMock((req) => ({ data: { path: req.url, received_api_key: req.headers["x-api-key"] ?? null } }));
+  const api = await startMock((req) => ({ data: {
+    path: req.url, received_api_key: req.headers["x-api-key"] ?? null,
+    ...(req.url.startsWith("/api/v2/signals/swaps") && !req.url.includes("old-server") ? { signals: [], next_cursor: null } : {}),
+  } }));
   const server = await startHttpServer({ GNOPULSE_API_BASE: api.url });
   try {
     const init = await server.post(INITIALIZE, { "X-API-Key": CALLER_KEY });
@@ -51,6 +54,17 @@ await run(async () => {
     const list = await server.post({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, session);
     const tools = sseMessages(await list.text())[0]?.result?.tools ?? [];
     check("tools/list returns tools", tools.length > 0, `${tools.length} tools`);
+    const names = new Set(tools.map((t) => t.name));
+    check("HTTP retains simulation and agent status", names.has("gno_simulate") && names.has("gno_agent_status"));
+    for (const name of ["gno_call", "gno_approve", "gno_swap", "gno_deploy", "gno_confirm"]) {
+      check(`HTTP omits ${name}`, !names.has(name));
+      const rejected = await server.post(
+        { jsonrpc: "2.0", id: 20, method: "tools/call", params: { name, arguments: {} } }, session,
+      );
+      const reply = sseMessages(await rejected.text())[0];
+      check(`HTTP rejects direct ${name} invocation`, Boolean(reply?.error || reply?.result?.isError));
+    }
+
 
     const call = await server.post(
       { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "gno_prices", arguments: {} } },
@@ -60,6 +74,18 @@ await run(async () => {
     const echoed = JSON.parse(text);
     check("REST call uses the v2 API", echoed.path === "/api/v2/prices", echoed.path);
     check("session API key is forwarded", echoed.received_api_key === CALLER_KEY, echoed.received_api_key);
+
+    const swapCall = async (args) => {
+      const response = await server.post({ jsonrpc: "2.0", id: 31, method: "tools/call",
+        params: { name: "gno_swap_signals", arguments: args } }, session);
+      return sseMessages(await response.text())[0]?.result;
+    };
+    const paged = await swapCall({ cursor: "opaque-page", limit: 2 });
+    check("settled cursor is forwarded as before", JSON.parse(paged.content[0].text).path.includes("before=opaque-page"));
+    const olderApi = await swapCall({ cursor: "old-server" });
+    check("old API cannot silently replay cursor page one", olderApi.isError && olderApi.content[0].text.includes("does not support"));
+    const mixed = await swapCall({ cursor: "opaque-page", offset: 1 });
+    check("mixed cursor and offset is rejected", mixed.isError);
 
     const noSession = await server.post({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} });
     check("request without a session is rejected", noSession.status === 400, String(noSession.status));

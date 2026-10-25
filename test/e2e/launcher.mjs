@@ -1,4 +1,4 @@
-// Launcher: reuses only a signer for its own key and chain, never sends the session token to
+// Launcher: owns an isolated signer, never sends the session token to
 // an unverified process, and starts `gnotx serve` with the chain id. Uses a fake gnotx.
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -35,12 +35,15 @@ function setup() {
 }
 
 /** Run the launcher until it exits or logs `until`, then stop it. */
-async function launch(env, until) {
+async function launch(env, until, normalEof = false) {
   const child = spawn(process.execPath, [LAUNCHER], { stdio: ["pipe", "ignore", "pipe"], env });
   let stderr = "";
   child.stderr.on("data", (d) => {
     stderr += d;
-    if (until.test(stderr)) child.kill("SIGTERM");
+    if (until.test(stderr)) {
+      if (normalEof) child.stdin.end();
+      else child.kill("SIGTERM");
+    }
   });
   const [code] = await once(child, "exit");
   return { code, stderr };
@@ -52,6 +55,12 @@ await run(async () => {
     serverEnv({ GNOTX_BIN: bin, GNOPULSE_AGENT_HOME: dir, GNOPULSE_SIGNER_ADDR: addr, FAKE_SERVE_LOG: serveLog, ...extra });
 
   try {
+    const readHome = path.join(dir, "read-only-home");
+    const readOnly = await launch(baseEnv("127.0.0.1:1", {
+      GNOPULSE_SIGNER: "none", GNOPULSE_AGENT_HOME: readHome, GNOTX_BIN: "/nonexistent/gnotx",
+    }), /ready \(stdio\)/, true);
+    check("signer none starts without a signer binary", readOnly.code === 0, readOnly.stderr.trim());
+    check("signer none creates no wallet directory", !fs.existsSync(readHome));
     const authHeaders = [];
     const other = await startMock((req) => {
       authHeaders.push(req.headers.authorization);
@@ -71,9 +80,96 @@ await run(async () => {
     const addr = `127.0.0.1:${await freePort()}`;
     const started = await launch(baseEnv(addr, { GNO_CHAIN_ID: "test13" }), /agent wallet/);
     const serve = JSON.parse(fs.readFileSync(serveLog, "utf8"));
-    try {
-      process.kill(serve.pid);
-    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    check("launcher SIGTERM stops its signer", !alive(serve.pid));
+    if (alive(serve.pid)) process.kill(serve.pid);
+
+    const eofAddr = `127.0.0.1:${await freePort()}`;
+    await launch(baseEnv(eofAddr, { GNO_CHAIN_ID: "onyx-1" }), /ready \(stdio\)/, true);
+    const eofServe = JSON.parse(fs.readFileSync(serveLog, "utf8"));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    check("normal stdin EOF stops the owned signer", !alive(eofServe.pid));
+    if (alive(eofServe.pid)) process.kill(eofServe.pid);
+
+    const shared = await startMock(() => ({ ok: true, caller: AGENT, chainid: "onyx-1" }));
+    const sharedRun = await launch(baseEnv(shared.url.replace("http://", ""), { GNO_CHAIN_ID: "onyx-1" }), /agent wallet/);
+    check("matching occupied endpoint is refused instead of adopted", sharedRun.code === 1 && /cannot be shared/.test(sharedRun.stderr));
+    check("shutdown preserves a preexisting signer", (await fetch(shared.url)).ok);
+    shared.close();
+
+    // Two normal clients use one persistent keybase but independent signer ports.
+    // Exercise both exit orders, normal EOF and termination.
+    for (const firstToExit of [0, 1]) {
+      const children = [], signers = [];
+      try {
+        for (let i = 0; i < 2; i++) {
+          const logFile = path.join(dir, `serve-${firstToExit}-${i}.json`);
+          const child = spawn(process.execPath, [LAUNCHER], {
+            stdio: ["pipe", "ignore", "pipe"],
+            env: baseEnv(undefined, { GNO_CHAIN_ID: "onyx-1", FAKE_SERVE_LOG: logFile }),
+          });
+          children.push(child);
+          await new Promise((resolve, reject) => {
+            let output = "";
+            const timeout = setTimeout(() => reject(new Error(output)), 10000);
+            child.stderr.on("data", d => {
+              output += d;
+              if (/ready \(stdio\)/.test(output)) { clearTimeout(timeout); resolve(); }
+            });
+          });
+          const info = JSON.parse(fs.readFileSync(logFile, "utf8"));
+          const addr = info.args[info.args.indexOf("-addr") + 1];
+          signers.push({ ...info, addr });
+        }
+        check("concurrent clients have distinct signer endpoints", signers[0].addr !== signers[1].addr);
+        const exiting = children[firstToExit], survivor = children[1 - firstToExit];
+        const exited = once(exiting, "exit");
+        if (firstToExit === 0) exiting.stdin.end();
+        else exiting.kill("SIGTERM");
+        await exited;
+        await new Promise(resolve => setTimeout(resolve, 250));
+        check("client shutdown stops only its own signer", !alive(signers[firstToExit].pid));
+        check("other client's signer remains healthy", (await fetch(`http://${signers[1-firstToExit].addr}/healthz`)).ok);
+        check("other MCP client stays running", survivor.exitCode === null && survivor.signalCode === null);
+        const ended = once(survivor, "exit"); survivor.stdin.end(); await ended;
+        await new Promise(resolve => setTimeout(resolve, 250));
+        check("last client leaves no owned signer", signers.every(s => !alive(s.pid)));
+      } finally {
+        children.forEach(c => c.kill("SIGTERM"));
+        signers.forEach(s => { if (alive(s.pid)) process.kill(s.pid); });
+      }
+    }
+
+    // Unexpected signer death must fail closed, rather than leave an MCP client
+    // attached to whatever later takes that endpoint.
+    {
+      const logFile = path.join(dir, "crashed-signer.json");
+      const child = spawn(process.execPath, [LAUNCHER], {
+        stdio: ["pipe", "ignore", "pipe"],
+        env: baseEnv(undefined, { GNO_CHAIN_ID: "onyx-1", FAKE_SERVE_LOG: logFile }),
+      });
+      let signer;
+      try {
+        await new Promise((resolve, reject) => {
+          let output = "";
+          const timeout = setTimeout(() => reject(new Error(output)), 10000);
+          child.stderr.on("data", d => { output += d; if (/ready \(stdio\)/.test(output)) { clearTimeout(timeout); resolve(); } });
+        });
+        signer = JSON.parse(fs.readFileSync(logFile, "utf8"));
+        const exited = once(child, "exit");
+        process.kill(signer.pid, "SIGTERM");
+        const [code] = await exited;
+        check("unexpected signer death stops its MCP client", code === 1);
+      } finally { child.kill("SIGTERM"); if (signer && alive(signer.pid)) process.kill(signer.pid); }
+    }
+
+    const policyAddr = `127.0.0.1:${await freePort()}`;
+    const policyRun = await launch(baseEnv(policyAddr, {
+      GNO_CHAIN_ID: "onyx-1", GNOPULSE_SIGNER: "microservice", GNOPULSE_POLICY_DEFAULT: "deny",
+    }), /ready \(stdio\)/);
+    check("launcher preserves an explicit default-deny policy", /ready \(stdio\)/.test(policyRun.stderr), policyRun.stderr.trim());
+
     const args = serve.args.join(" ");
     check("serve gets -chainid from GNO_CHAIN_ID", /-chainid test13/.test(args), args);
     check("serve is not passed -broadcast", !serve.args.includes("-broadcast"), args);
