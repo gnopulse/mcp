@@ -15,11 +15,15 @@ export function registerV2Tools(server: McpServer, api: ApiClient): void {
     {
       title: "NFT holdings",
       description:
-        "Every GRC721 NFT a wallet owns across all collections, grouped by collection. Includes " +
+        "Cursor-paginated GRC721 NFTs a wallet owns across all collections. Includes " +
         "GnoSwap LP positions (each is an NFT). Prefer this over gno_grc721 for 'what does X own'.",
-      inputSchema: { address: addressParam() },
+      inputSchema: {
+        address: addressParam(),
+        limit: z.number().int().min(1).max(1000).optional(),
+        cursor: z.string().max(4096).optional().describe("next_cursor from the previous page for this wallet"),
+      },
     },
-    ({ address }) => guard(async () => ok(await api.listV2(`wallets/${seg(address)}/nfts`))),
+    ({ address, limit, cursor }) => guard(async () => ok(await api.nftPageV2(`wallets/${seg(address)}/nfts`, { limit, cursor }))),
   );
 
   server.registerTool(
@@ -113,10 +117,19 @@ export function registerV2Tools(server: McpServer, api: ApiClient): void {
   server.registerTool(
     "gno_pool_lp_providers",
     {
-      title: "Pool LP providers",
-      description: "Liquidity providers for a GnoSwap pool.",
-      inputSchema: { pool: z.string().describe("pool path/id") },
+      title: "Pool liquidity contributions and owners",
+      description: "Indexed contributions, raw amounts and nullable current-price estimates, with separately verified current position owners. Events page by before; contributors page by offset.",
+      inputSchema: { pool: z.string().describe("pool path/id"), limit: z.number().int().min(1).max(500).optional(),
+        offset: z.number().int().min(0).max(100000).optional(), before: z.string().optional() },
     },
-    ({ pool }) => guard(async () => ok(await api.listV2(`pools/${seg(pool)}/lp-providers`))),
+    ({ pool, limit, offset, before }) => guard(async () => {
+      const result = await api.getV2(`pools/${seg(pool)}/lp-providers`, { limit, offset, before });
+      // Retain the existing items bundle while exposing its independent paging.
+      return ok({ items: result.data, next_cursor: result.data?.next_cursor ?? null,
+        has_more: result.data?.events_has_more ?? false,
+        contributors_has_more: result.data?.has_more ?? false,
+        next_offset: result.data?.has_more ? (result.data.offset ?? offset ?? 0) + (result.data.limit ?? limit ?? 100) : null,
+        quota: result.meta.quota });
+    }),
   );
 }

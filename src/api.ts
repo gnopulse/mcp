@@ -88,6 +88,21 @@ export class ApiClient {
     };
   }
 
+  /** Reject old APIs that ignore NFT cursors instead of repeating page one silently. */
+  async nftPageV2(path: string, params?: Params): Promise<V2Page> {
+    const { data, meta } = await this.getV2<unknown[]>(path, params);
+    if (!Array.isArray(data) || typeof meta.has_more !== "boolean" ||
+        !Object.prototype.hasOwnProperty.call(meta, "next_cursor") ||
+        (meta.next_cursor !== null && (typeof meta.next_cursor !== "string" || !meta.next_cursor)) ||
+        meta.has_more !== (meta.next_cursor !== null) ||
+        (meta.has_more && data.length === 0) ||
+        (params?.cursor && meta.next_cursor === params.cursor)) {
+      throw new ApiError("NFT API pagination is unsupported or contradictory. Use an API release with NFT cursor support.");
+    }
+    return { items: data, next_cursor: meta.next_cursor, has_more: meta.has_more,
+      total: meta.total, limit: meta.limit, by_collection: meta.by_collection, quota: meta.quota };
+  }
+
   /** Holder distribution is a bundle, not an array-valued resource page. */
   async holderPageV2(path: string, params?: Params) {
     const { data, meta } = await this.getV2<Record<string, any>>(path, params);

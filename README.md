@@ -99,6 +99,12 @@ The host must not sign receipts based on the model claiming approval or expose i
 
 Data and analytics tools call the GnoPulse API with `GNOPULSE_API_KEY`.
 
+`gno_nft_holdings` accepts `address`, optional `limit` (1 to 1000, default 500), and
+optional `cursor`. Pass the returned `next_cursor` until it is null. `total` and
+`by_collection` cover the whole owner's holdings, not the loaded page. Ownership
+can change between requests. The tool requires an API with NFT cursor support and
+reports an incompatibility instead of silently repeating page one on an older API.
+
 ## Configuration
 
 Data access needs no wallet configuration. Execution requires an explicit agent identity, wallet address and enabled signing service. The launcher supplies the wallet address after reading public metadata.
@@ -219,3 +225,14 @@ The proposal binds total fee, gas and storage ceilings. `/execute` requires `max
 Hosted chain/simulation tools require a successful usage-authorization response before execution. Timeouts, network failures, malformed allowances and explicit denials stop the tool. Local stdio public-RPC reads preserve their no-key and metering-outage behavior; an intentionally keyless hosted deployment must set its key requirement off explicitly.
 
 Token-holder distribution tools retain the complete REST distribution bundle in `items`, including `holders`, summary metrics and `partial`. Page with the outer `has_more` and `next_offset` using the tool offset parameter. `total` is the API-reported holder_count, not the current page length; the retained partial flag still describes source completeness. Launch radar and LP-provider tools also retain their summary bundles in items and are not generic array pages. Use token_path values from the registry/prices feed, including the qualified token name (for example a realm.Token identifier), rather than assuming a bare realm identifies one token.
+
+
+### Coordinated accounting and data candidate
+
+The unpublished candidate adds hosted reserve/finish accounting with a service credential kept only by operators. Customer API keys cannot attest tool completion. REST wrappers are charged by REST once; local public-RPC tools remain independent of hosted credits. Upgrade the API and hosted service together before enabling the new accounting epoch. Failed or refused tools release reservations; a committed result does not prove network delivery to the client.
+
+The matching API serves holder pages from worker projections with raw integer amounts and observation ages. Read `freshness`, `partial` and per-holder `balance_observed_at`; balances are observations at different times, not a census at one current block. Missing or stale required projections return explicit errors. LP contribution estimates retain unpriced events and distinguish historical contributors from separately verified current position owners. Follow the cursor returned for events and offset for contributor bundles. These changes require the matching API producers and readers before a package rollout.
+
+The versioned `capabilities.json` describes registered tools and their transports. REST has additional routes without dedicated MCP wrappers. Token registry, balance and metadata reads distinguish provider failure from verified empty data. Onyx has no GnoSwap trading analytics; its test-only payment configuration is not a market exchange rate.
+
+For the LP tool, outer `has_more` and `next_cursor` describe event history; send the cursor as `before`. Contributor paging is independent: use `contributors_has_more` and `next_offset` with `offset`. The `items` bundle retains both source flags. A completed contributor page does not imply that all events were fetched.

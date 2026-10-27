@@ -82,3 +82,32 @@ test("holder continuation rejects malformed or stalled pages", async () => {
     });
   }
 });
+
+test("NFT continuation preserves whole-owner metadata and rejects incompatible APIs", async () => {
+  const meta = { limit: 1, total: 2620, by_collection: { LP: 2620 }, has_more: true, next_cursor: "page2" };
+  await serve({ data: [{ token_id: "1" }], meta }, async api => {
+    const page = await api.nftPageV2("wallets/a/nfts", { limit: 1 });
+    assert.equal(page.total, 2620);
+    assert.equal(page.next_cursor, "page2");
+    assert.deepEqual(page.by_collection, { LP: 2620 });
+    assert.equal(page.quota["x-quota-daily-remaining"], "99");
+  });
+  for (const invalid of [
+    { ...meta, next_cursor: undefined },
+    { ...meta, next_cursor: null },
+    { ...meta, next_cursor: 5 },
+    { ...meta, has_more: false },
+  ]) {
+    await serve({ data: [{ token_id: "1" }], meta: invalid }, async api => {
+      await assert.rejects(api.nftPageV2("wallets/a/nfts", { cursor: "page1" }), /pagination/);
+    });
+  }
+  await serve({ data: [{ token_id: "1" }], meta }, async api => {
+    await assert.rejects(api.nftPageV2("wallets/a/nfts", { cursor: "page2" }), /pagination/);
+  });
+  await serve({ data: [], meta: { ...meta, has_more: false, next_cursor: null } }, async api => {
+    const page = await api.nftPageV2("wallets/a/nfts", { cursor: "last" });
+    assert.equal(page.total, 2620);
+    assert.equal(page.has_more, false);
+  });
+});

@@ -38,7 +38,7 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
   registerReadTools(server, api);
   registerV2Tools(server, api);
   registerChainTools(meteredServer, deps.rpc);
-  registerTokenTools(meteredServer, deps.rpc, cfg.grc20Registry);
+  registerTokenTools(meteredServer, deps.rpc, cfg.grc20Registry, cfg.chainId);
   registerExecutionTools(meteredServer, {
     gnotx: deps.gnotx,
     rpc: deps.rpc,

@@ -20,8 +20,10 @@ const DECIMALS_OVERRIDE: Record<string, number> = {
   "gno.land/r/gnoswap/gov/xgns": 6,
 };
 
-function decimalsOverrideFor(token: string): number | undefined {
+function decimalsOverrideFor(token: string, chainId: string): number | undefined {
+  if (!["gnoland-1", "onyx-1"].includes(chainId)) return undefined;
   for (const [realm, decimals] of Object.entries(DECIMALS_OVERRIDE)) {
+    if (chainId === "onyx-1" && realm !== "gno.land/r/gnoland/wugnot") continue;
     if (token === realm || token.startsWith(`${realm}.`)) return decimals;
   }
   return undefined;
@@ -32,7 +34,7 @@ const REGISTRY_KEY_RE = /grc20reg(?:\/[^:\s]*)?:([^)\s]+)/g;
 
 const quote = (s: string) => JSON.stringify(s);
 
-export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: string): void {
+export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: string, chainId = "gnoland-1"): void {
   const readToken = async (key: string, expr: string): Promise<GnoScalar> =>
     parseGnoScalar(absentToNull(await rpc.qeval(`${registry}.Get(${quote(key)}).${expr}`)));
 
@@ -48,7 +50,7 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
     () =>
       guard(async () => {
         const render = absentToNull(await rpc.qrender(registry, ""));
-        if (!render) return ok({ registry, count: 0, tokens: [] });
+        if (render === null) throw new Error("Token registry is unavailable or unsupported on this network");
         const keys = [...new Set([...render.matchAll(REGISTRY_KEY_RE)].map((m) => m[1]))];
         return ok({ registry, count: keys.length, tokens: keys });
       }),
@@ -80,7 +82,9 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
           readToken(token, "GetDecimals()"),
           readToken(token, "TotalSupply()"),
         ]);
-        const override = decimalsOverrideFor(token);
+        if ([name, symbol, decimals, totalSupply].some(value => value === null))
+          throw new Error("Token metadata could not be verified for this identifier; use token registry discovery");
+        const override = decimalsOverrideFor(token, chainId);
         const overridden = override !== undefined && override !== decimals;
         return ok({
           token,
@@ -112,6 +116,7 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
     ({ token, address }) =>
       guard(async () => {
         const balance = await readToken(token, `BalanceOf(${quote(address)})`);
+        if (balance === null) throw new Error("Token balance could not be verified; no zero balance is asserted");
         return ok({ token, address, balance_raw: balance, note: "raw units; divide by 10^decimals" });
       }),
   );
@@ -133,11 +138,8 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
     ({ pkgpath, tokenId, owner }) =>
       guard(async () => {
         const tryEval = async (expr: string): Promise<GnoScalar> => {
-          try {
-            return parseGnoScalar(absentToNull(await rpc.qeval(`${pkgpath}.${expr}`)));
-          } catch {
-            return null;
-          }
+          // Missing getters return Absent; transport failures must reach guard.
+          return parseGnoScalar(absentToNull(await rpc.qeval(`${pkgpath}.${expr}`)));
         };
         const out: Record<string, unknown> = {
           pkgpath,
@@ -152,6 +154,8 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
           out.token_uri =
             (await tryEval(`TokenURI(${quote(tokenId)})`)) ?? (await tryEval(`GetTokenURI(${quote(tokenId)})`));
         }
+        if (["name", "symbol", "balance", "owner_of", "token_uri"].every(key => out[key] == null))
+          throw new Error("No standard NFT getter could be verified; collection existence is unknown");
         return ok(out);
       }),
   );

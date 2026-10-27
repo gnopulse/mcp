@@ -1,0 +1,317 @@
+{
+  "status": "0.3.2: 0.3.1 plus NFT paging, LP continuation and accounting repairs",
+  "tools": [
+    {
+      "name": "gno_agent_status",
+      "source": "execution.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_api_usage",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/blocks"
+      ]
+    },
+    {
+      "name": "gno_approve",
+      "source": "execution.ts",
+      "transport": "local only",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_call",
+      "source": "execution.ts",
+      "transport": "local only",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_confirm",
+      "source": "execution.ts",
+      "transport": "local only",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_deploy",
+      "source": "execution.ts",
+      "transport": "local only",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_dev_activity",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dev-activity"
+      ]
+    },
+    {
+      "name": "gno_eval",
+      "source": "chain.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_get_account",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/stats"
+      ]
+    },
+    {
+      "name": "gno_get_balances",
+      "source": "chain.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_get_block",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/blocks/{height}"
+      ]
+    },
+    {
+      "name": "gno_get_events",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/events"
+      ]
+    },
+    {
+      "name": "gno_get_package",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/realms/{pkgpath}"
+      ]
+    },
+    {
+      "name": "gno_get_transactions",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/transactions"
+      ]
+    },
+    {
+      "name": "gno_grc721",
+      "source": "tokens.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_holder_series",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/tokens/{token}/holder-series"
+      ]
+    },
+    {
+      "name": "gno_label",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/labels"
+      ]
+    },
+    {
+      "name": "gno_launch_radar",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/launches"
+      ]
+    },
+    {
+      "name": "gno_mev",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/mev"
+      ]
+    },
+    {
+      "name": "gno_nft_collection",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/nft/collections/{pkgpath}"
+      ]
+    },
+    {
+      "name": "gno_nft_holdings",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/nfts"
+      ]
+    },
+    {
+      "name": "gno_ohlcv",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/tokens/{token}/candles"
+      ]
+    },
+    {
+      "name": "gno_package_files",
+      "source": "chain.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_pool_depth",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/pools/{pool}/depth"
+      ]
+    },
+    {
+      "name": "gno_pool_lp_providers",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/pools/{pool}/lp-providers"
+      ]
+    },
+    {
+      "name": "gno_pools",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/pools"
+      ]
+    },
+    {
+      "name": "gno_prices",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/tokens/{token}/price"
+      ]
+    },
+    {
+      "name": "gno_render",
+      "source": "chain.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_search",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/search"
+      ]
+    },
+    {
+      "name": "gno_simulate",
+      "source": "execution.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_smart_money",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/smart-money"
+      ]
+    },
+    {
+      "name": "gno_status",
+      "source": "chain.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_swap",
+      "source": "execution.ts",
+      "transport": "local only",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_swap_signals",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/signals/swaps"
+      ]
+    },
+    {
+      "name": "gno_token_balance",
+      "source": "tokens.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_token_holders",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/tokens/{token}/holders"
+      ]
+    },
+    {
+      "name": "gno_token_metadata",
+      "source": "tokens.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_token_registry",
+      "source": "tokens.ts",
+      "transport": "hosted and local",
+      "rest_paths": []
+    },
+    {
+      "name": "gno_wallet_pnl",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/pnl"
+      ]
+    },
+    {
+      "name": "gno_wallet_tokens",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/tokens"
+      ]
+    },
+    {
+      "name": "gno_wallet_transfers",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/transfers"
+      ]
+    },
+    {
+      "name": "gno_wash_trades",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wash-trades"
+      ]
+    },
+    {
+      "name": "gno_whales",
+      "source": "read.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/whales"
+      ]
+    }
+  ]
+}

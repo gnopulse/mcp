@@ -12,31 +12,60 @@ export class Meter {
 
   /** Returns null if the call may proceed, or the reason it was rejected. */
   async check(tool: string): Promise<string | null> {
+    return (await this.authorize(tool)).error;
+  }
+
+  private async authorize(tool: string, completion?: { reservation: string; successful: boolean }): Promise<{ error: string | null; reservation?: string }> {
+    // Local public-RPC tools have no hosted execution cost. REST-backed tools
+    // still use their own API accounting through ApiClient.
+    if (this.cfg.transport === "stdio") return { error: null };
     // Without a per-caller key there is nothing to meter.
     if (!this.cfg.apiKey)
-      return this.cfg.transport === "http" && this.cfg.requireApiKey ? "API key required" : null;
+      return { error: this.cfg.transport === "http" && this.cfg.requireApiKey ? "API key required" : null };
     let resp: Response;
     try {
       resp = await fetch(`${this.cfg.apiBase}/api/mcp/meter`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": this.cfg.apiKey },
-        body: JSON.stringify({ tool }),
+        headers: { "Content-Type": "application/json", "X-API-Key": this.cfg.apiKey,
+          ...(this.cfg.meterServiceToken ? { "X-GP-Meter-Service": this.cfg.meterServiceToken } : {}) },
+        body: JSON.stringify({ tool, action: completion ? "finish" : "reserve", ...completion }),
         signal: AbortSignal.timeout(this.cfg.timeoutMs)
       });
     } catch {
-      return this.cfg.transport === "http"
+      return { error: this.cfg.transport === "http" || completion
         ? "Usage authorization is temporarily unavailable. Retry shortly"
-        : null;
+        : null };
     }
     if (resp.ok) {
-      if (this.cfg.transport !== "http") return null;
-      const verdict = (await resp.json().catch(() => null)) as { ok?: unknown; allowed?: unknown } | null;
-      return verdict?.ok === true && verdict?.allowed === true
-        ? null
-        : "Usage authorization did not return a valid allowance. Retry shortly";
+      const verdict = (await resp.json().catch(() => null)) as { ok?: unknown; allowed?: unknown; reservation?: unknown; accounting_version?: unknown } | null;
+      if (verdict?.ok !== true || verdict?.allowed !== true)
+        return { error: "Usage authorization did not return a valid allowance. Retry shortly" };
+      if (verdict.accounting_version === 2 && typeof verdict.reservation !== "string")
+        return { error: "Usage authorization did not return a reservation. Retry shortly" };
+      return { error: null, reservation: typeof verdict.reservation === "string" ? verdict.reservation : undefined };
     }
     const body = (await resp.json().catch(() => null)) as { reason?: unknown } | null;
-    return body?.reason ? String(body.reason) : `rate or quota limit (HTTP ${resp.status})`;
+    return { error: body?.reason ? String(body.reason) : `rate or quota limit (HTTP ${resp.status})` };
+  }
+
+  async execute(tool: string, handler: () => unknown): Promise<unknown> {
+    const admission = await this.authorize(tool);
+    const failure = (reason: string) => ({ content: [{ type: "text", text: `Error: ${reason}.` }], isError: true });
+    if (admission.error) return failure(admission.error);
+    let result: unknown;
+    try {
+      result = await handler();
+    } catch (error) {
+      if (admission.reservation)
+        await this.authorize(tool, { reservation: admission.reservation, successful: false });
+      throw error;
+    }
+    if (admission.reservation) {
+      const successful = !(result && typeof result === "object" && "isError" in result && result.isError);
+      const completion = await this.authorize(tool, { reservation: admission.reservation, successful });
+      if (completion.error) return failure(completion.error);
+    }
+    return result;
   }
 }
 
@@ -47,14 +76,7 @@ export class Meter {
 export function metered(server: McpServer, meter: Meter): McpServer {
   const registerTool = (name: string, config: unknown, handler: (...args: any[]) => unknown) => {
     const wrapped = async (args: unknown, extra: unknown) => {
-      const denied = await meter.check(name);
-      if (denied) {
-        return {
-          content: [{ type: "text", text: `Error: ${denied}.` }],
-          isError: true
-        };
-      }
-      return handler(args, extra);
+      return meter.execute(name, () => handler(args, extra));
     };
     return (server.registerTool as (...args: unknown[]) => unknown).call(server, name, config, wrapped);
   };

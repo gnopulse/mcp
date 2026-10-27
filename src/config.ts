@@ -9,6 +9,8 @@ export interface Config {
   apiBase: string;
   /** API key sent as X-API-Key. */
   apiKey?: string;
+  /** Hosted service attestation secret, never supplied by a caller. */
+  meterServiceToken?: string;
   /** RPC endpoints for ABCI queries, in failover order. */
   rpcUrls: string[];
   chainId: string;
@@ -45,6 +47,7 @@ export function loadConfig(): Config {
   return {
     apiBase: trimSlashes(env("GNOPULSE_API_BASE") ?? "https://gnopulse.xyz"),
     apiKey: env("GNOPULSE_API_KEY"),
+    meterServiceToken: env("GNOPULSE_METER_SERVICE_TOKEN"),
     rpcUrls: envList("GNO_RPC_URLS") ?? DEFAULT_RPC_URLS,
     chainId: env("GNO_CHAIN_ID") ?? "gnoland-1",
     grc20Registry: env("GNO_GRC20_REGISTRY") ?? "gno.land/r/nt/grc20reg/v0",

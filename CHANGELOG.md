@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.3.1 (unreleased)
+## 0.3.2 (2026-10-27)
+
+- Align the LP tool event cursor with its event continuation flag; expose separate contributor continuation and next offset. Retain the distribution bundle.
+
+- Support trusted hosted usage reservations and completion. Withhold useful output if completion cannot be committed; release failed tools. Keep local public-RPC tools independent of hosted accounting.
+- Preserve LP bundle compatibility and expose event cursors and contributor offsets, nullable estimates and separately verified ownership. Requires the matching v2 producer/reader rollout.
+- Scope placeholder-decimal corrections to verified networks; Onyx wrapped GNOT uses six effective display decimals with unchanged raw units.
+- Publish a versioned capability manifest checked against actual tool registration and transport restrictions.
+
+- Add optional limit/cursor inputs to NFT holdings, preserving the address-only default and whole-owner metadata. Reject unsupported or stalled continuation instead of repeating the first page. Requires the API NFT cursor release before rollout.
+
+## 0.3.1
 
 - Clarify that token and NFT collection inputs use identifiers returned by discovery tools, rather than bare realm paths.
 

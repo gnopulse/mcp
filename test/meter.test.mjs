@@ -74,3 +74,35 @@ test("hosted direct tools require explicit usage authorization; local no-key rea
   assert.match(await new Meter(offline).check("gno_simulate"), /unavailable/);
   assert.equal(await new Meter({ ...offline, transport: "stdio" }).check("gno_status"), null);
 });
+
+test("trusted reservations finalize before output; failed completion withholds data", async () => {
+  const calls=[];
+  let allowFinish=true;
+  const server=createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;
+    const body=JSON.parse(raw);calls.push({body,service:req.headers['x-gp-meter-service']});
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify(body.action==='reserve'
+      ? {ok:true,allowed:true,accounting_version:2,reservation:'receipt'}
+      : {ok:true,allowed:allowFinish}));
+  }).listen(0,'127.0.0.1');
+  await once(server,'listening');
+  const meter=new Meter({...loadConfig(),transport:'http',apiKey:'test',meterServiceToken:'service-test',
+    apiBase:`http://127.0.0.1:${server.address().port}`});
+  try{
+    const result=await meter.execute('gno_status',()=>({content:[{type:'text',text:'useful'}]}));
+    assert.equal(result.content[0].text,'useful');
+    assert.deepEqual(calls.map(c=>c.body.action),['reserve','finish']);
+    assert.equal(calls[1].body.successful,true);
+    assert.equal(calls[0].service,'service-test');
+    allowFinish=false;
+    const withheld=await meter.execute('gno_status',()=>({content:[{type:'text',text:'secret-result'}]}));
+    assert.equal(withheld.isError,true);
+    assert.doesNotMatch(JSON.stringify(withheld),/secret-result/);
+    allowFinish=true;
+    await meter.execute('gno_status',()=>({content:[],isError:true}));
+    assert.equal(calls.at(-1).body.successful,false);
+    await assert.rejects(meter.execute('gno_status',()=>{throw Error('provider down')}));
+    assert.equal(calls.at(-1).body.successful,false);
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
