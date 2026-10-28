@@ -143,7 +143,9 @@ export function registerReadTools(server: McpServer, api: ApiClient): void {
     {
       title: "DEX pools",
       description:
-        "GnoSwap pools with TVL, volume, and APR. For a single pool use gno_pool_depth, " +
+        "GnoSwap pools: token pair, fee tier and creation details, with each pool's market figures " +
+        "under `market` (TVL, 24h/7d volume, fee, emission and total APR, swaps). market is null when " +
+        "not yet computed; meta.market_as_of dates it. For a single pool use gno_pool_depth, " +
         "gno_pool_lp_providers, or gno_ohlcv.",
       inputSchema: { limit: limitParam(500), offset: z.number().int().min(0).max(100000).optional() },
     },

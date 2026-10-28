@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3 (2026-10-28)
+
+- Add 36 read tools covering the rest of the v2 API: recent blocks, governance proposals and votes, validators, bridges and bridge transfers, GNOT wraps, realm graph, discoveries, libraries, GPAO queue, DEX analytics, volume series, pool candles, pool trades, multi-hop legs, swap quotes and routes, token directory, all prices, launchpad markets and quotes, launch snipers, CVD, wallet flows, known entities, wallet DeFi, wallet realms, wallet cluster, realms, functions, failed calls, sparklines and health. Requires the matching API release.
+- `gno_pools` returns each pool's TVL, volume and APR under `market`, dated by `market_as_of`.
+- List results pass through `ignored_params` when the API did not apply a parameter.
+
 ## 0.3.2 (2026-10-27)
 
 - Align the LP tool event cursor with its event continuation flag; expose separate contributor continuation and next offset. Retain the distribution bundle.

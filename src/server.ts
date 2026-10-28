@@ -14,6 +14,7 @@ import type { ApprovalStore } from "./signer/approvals.js";
 import { Meter, metered } from "./meter.js";
 import { registerReadTools } from "./tools/read.js";
 import { registerV2Tools } from "./tools/v2.js";
+import { registerDatasetTools } from "./tools/datasets.js";
 import { registerChainTools } from "./tools/chain.js";
 import { registerTokenTools } from "./tools/tokens.js";
 import { registerExecutionTools } from "./tools/execution.js";
@@ -37,6 +38,7 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
 
   registerReadTools(server, api);
   registerV2Tools(server, api);
+  registerDatasetTools(server, api);
   registerChainTools(meteredServer, deps.rpc);
   registerTokenTools(meteredServer, deps.rpc, cfg.grc20Registry, cfg.chainId);
   registerExecutionTools(meteredServer, {

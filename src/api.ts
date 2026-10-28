@@ -80,6 +80,8 @@ export class ApiClient {
       has_more: meta.has_more ?? false,
       ...(meta.stats ? { stats: meta.stats } : {}),
       ...(meta.by_collection ? { by_collection: meta.by_collection } : {}),
+      ...(meta.market_as_of !== undefined ? { market_as_of: meta.market_as_of } : {}),
+      ...(meta.ignored_params ? { ignored_params: meta.ignored_params } : {}),
       ...(meta.total != null ? { total: meta.total } : {}),
       ...(meta.limit != null ? { limit: meta.limit } : {}),
       ...(meta.offset != null ? { offset: meta.offset,

@@ -89,12 +89,14 @@ The host must not sign receipts based on the model claiming approval or expose i
 
 | Area | Tools |
 |---|---|
-| Chain | `gno_status` `gno_get_block` `gno_get_transactions` `gno_get_events` `gno_get_account` `gno_get_balances` `gno_eval` `gno_render` `gno_get_package` `gno_package_files` `gno_search` |
-| Tokens | `gno_token_registry` `gno_token_metadata` `gno_token_balance` `gno_token_holders` `gno_holder_series` `gno_prices` `gno_ohlcv` |
-| Wallets | `gno_wallet_tokens` `gno_wallet_transfers` `gno_wallet_pnl` `gno_label` `gno_whales` |
+| Chain | `gno_status` `gno_blocks` `gno_get_block` `gno_get_transactions` `gno_get_events` `gno_get_account` `gno_get_balances` `gno_eval` `gno_render` `gno_get_package` `gno_package_files` `gno_search` `gno_health` `gno_sparklines` |
+| Explorer | `gno_realms` `gno_functions` `gno_failed_calls` `gno_realm_graph` `gno_discoveries` `gno_libraries` `gno_library` `gno_gpao_queue` `gno_gpao_package` |
+| Governance and bridges | `gno_governance` `gno_governance_votes` `gno_validators` `gno_bridges` `gno_bridge_transfers` `gno_wraps` |
+| Tokens | `gno_token_registry` `gno_token_metadata` `gno_token_balance` `gno_token_holders` `gno_holder_series` `gno_prices` `gno_price_list` `gno_ohlcv` `gno_token_directory` `gno_launchpad` `gno_launch_quote` |
+| Wallets | `gno_wallet_tokens` `gno_wallet_transfers` `gno_wallet_pnl` `gno_wallet_defi` `gno_wallet_realms` `gno_wallet_cluster` `gno_label` `gno_whales` |
 | NFTs | `gno_grc721` `gno_nft_holdings` `gno_nft_collection` |
-| DEX | `gno_pools` `gno_pool_depth` `gno_pool_lp_providers` |
-| Analytics | `gno_smart_money` `gno_swap_signals` `gno_launch_radar` `gno_mev` `gno_wash_trades` `gno_dev_activity` |
+| DEX | `gno_pools` `gno_pool_depth` `gno_pool_lp_providers` `gno_pool_ohlcv` `gno_pool_trades` `gno_dex_analytics` `gno_dex_series` `gno_swap_hops` `gno_dex_route` `gno_dex_quote` |
+| Analytics | `gno_smart_money` `gno_swap_signals` `gno_launch_radar` `gno_launch_snipers` `gno_mev` `gno_wash_trades` `gno_dev_activity` `gno_cvd` `gno_wallet_flows` `gno_known_entities` |
 | Execution | `gno_agent_status` `gno_simulate` `gno_call` `gno_swap` `gno_approve` `gno_deploy` `gno_confirm` |
 
 Data and analytics tools call the GnoPulse API with `GNOPULSE_API_KEY`.

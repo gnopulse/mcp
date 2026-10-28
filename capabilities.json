@@ -1,5 +1,5 @@
 {
-  "status": "0.3.2: 0.3.1 plus NFT paging, LP continuation and accounting repairs",
+  "status": "0.3.3: 0.3.2 plus the full v2 read surface and pool market figures",
   "tools": [
     {
       "name": "gno_agent_status",
@@ -22,6 +22,30 @@
       "rest_paths": []
     },
     {
+      "name": "gno_blocks",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/blocks"
+      ]
+    },
+    {
+      "name": "gno_bridge_transfers",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/bridges/transfers"
+      ]
+    },
+    {
+      "name": "gno_bridges",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/bridges"
+      ]
+    },
+    {
       "name": "gno_call",
       "source": "execution.ts",
       "transport": "local only",
@@ -32,6 +56,14 @@
       "source": "execution.ts",
       "transport": "local only",
       "rest_paths": []
+    },
+    {
+      "name": "gno_cvd",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/cvd"
+      ]
     },
     {
       "name": "gno_deploy",
@@ -48,10 +80,66 @@
       ]
     },
     {
+      "name": "gno_dex_analytics",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dex/analytics"
+      ]
+    },
+    {
+      "name": "gno_dex_quote",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dex/quote"
+      ]
+    },
+    {
+      "name": "gno_dex_route",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dex/route"
+      ]
+    },
+    {
+      "name": "gno_dex_series",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dex/series"
+      ]
+    },
+    {
+      "name": "gno_discoveries",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/discoveries"
+      ]
+    },
+    {
       "name": "gno_eval",
       "source": "chain.ts",
       "transport": "hosted and local",
       "rest_paths": []
+    },
+    {
+      "name": "gno_failed_calls",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/failed-calls"
+      ]
+    },
+    {
+      "name": "gno_functions",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/functions"
+      ]
     },
     {
       "name": "gno_get_account",
@@ -100,10 +188,50 @@
       ]
     },
     {
+      "name": "gno_governance",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/governance/proposals"
+      ]
+    },
+    {
+      "name": "gno_governance_votes",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/governance/proposals/{id}/votes"
+      ]
+    },
+    {
+      "name": "gno_gpao_package",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/gpao/packages/{path}"
+      ]
+    },
+    {
+      "name": "gno_gpao_queue",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/gpao/queue"
+      ]
+    },
+    {
       "name": "gno_grc721",
       "source": "tokens.ts",
       "transport": "hosted and local",
       "rest_paths": []
+    },
+    {
+      "name": "gno_health",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/health"
+      ]
     },
     {
       "name": "gno_holder_series",
@@ -111,6 +239,14 @@
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/tokens/{token}/holder-series"
+      ]
+    },
+    {
+      "name": "gno_known_entities",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/known-entities"
       ]
     },
     {
@@ -122,11 +258,51 @@
       ]
     },
     {
+      "name": "gno_launch_quote",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/launchpad/quote"
+      ]
+    },
+    {
       "name": "gno_launch_radar",
       "source": "read.ts",
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/launches"
+      ]
+    },
+    {
+      "name": "gno_launch_snipers",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/launches/{pool}/snipers"
+      ]
+    },
+    {
+      "name": "gno_launchpad",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/launchpad"
+      ]
+    },
+    {
+      "name": "gno_libraries",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/libraries"
+      ]
+    },
+    {
+      "name": "gno_library",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/libraries/{path}"
       ]
     },
     {
@@ -184,6 +360,22 @@
       ]
     },
     {
+      "name": "gno_pool_ohlcv",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/pools/{pool}/ohlcv"
+      ]
+    },
+    {
+      "name": "gno_pool_trades",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dex/pool-trades"
+      ]
+    },
+    {
       "name": "gno_pools",
       "source": "read.ts",
       "transport": "hosted and local",
@@ -192,11 +384,35 @@
       ]
     },
     {
+      "name": "gno_price_list",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/prices"
+      ]
+    },
+    {
       "name": "gno_prices",
       "source": "read.ts",
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/tokens/{token}/price"
+      ]
+    },
+    {
+      "name": "gno_realm_graph",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/realm-graph"
+      ]
+    },
+    {
+      "name": "gno_realms",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/realms"
       ]
     },
     {
@@ -228,6 +444,14 @@
       ]
     },
     {
+      "name": "gno_sparklines",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/sparklines"
+      ]
+    },
+    {
       "name": "gno_status",
       "source": "chain.ts",
       "transport": "hosted and local",
@@ -238,6 +462,14 @@
       "source": "execution.ts",
       "transport": "local only",
       "rest_paths": []
+    },
+    {
+      "name": "gno_swap_hops",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/dex/swap-hops"
+      ]
     },
     {
       "name": "gno_swap_signals",
@@ -252,6 +484,14 @@
       "source": "tokens.ts",
       "transport": "hosted and local",
       "rest_paths": []
+    },
+    {
+      "name": "gno_token_directory",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/tokens"
+      ]
     },
     {
       "name": "gno_token_holders",
@@ -274,11 +514,51 @@
       "rest_paths": []
     },
     {
+      "name": "gno_validators",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/validators"
+      ]
+    },
+    {
+      "name": "gno_wallet_cluster",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/cluster"
+      ]
+    },
+    {
+      "name": "gno_wallet_defi",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/defi"
+      ]
+    },
+    {
+      "name": "gno_wallet_flows",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/signals/flows"
+      ]
+    },
+    {
       "name": "gno_wallet_pnl",
       "source": "v2.ts",
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/wallets/{address}/pnl"
+      ]
+    },
+    {
+      "name": "gno_wallet_realms",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/realms"
       ]
     },
     {
@@ -311,6 +591,14 @@
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/whales"
+      ]
+    },
+    {
+      "name": "gno_wraps",
+      "source": "datasets.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wraps"
       ]
     }
   ]
