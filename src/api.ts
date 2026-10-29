@@ -45,11 +45,42 @@ interface RawResponse {
   quota: Record<string, string>;
 }
 
-export class ApiClient {
-  constructor(private readonly cfg: Config) {}
+/** How long a tool waits for a result the API is still computing, e.g. a cold wallet's balances. */
+const PENDING_BUDGET_MS = 25_000;
 
-  /** GET /api/v2/<path> and unwrap the envelope. Throws ApiError on a v2 error. */
+/** True when the API answered before the result was ready. Pending answers are not billed. */
+function isPending(data: unknown, meta: Record<string, any>): boolean {
+  return meta.pending === true || (typeof data === "object" && data !== null && (data as any).pending === true);
+}
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export class ApiClient {
+  constructor(
+    private readonly cfg: Config,
+    private readonly pendingBudgetMs = PENDING_BUDGET_MS,
+  ) {}
+
+  /**
+   * GET /api/v2/<path> and unwrap the envelope. Throws ApiError on a v2 error.
+   *
+   * A pending answer carries placeholder data (an empty token list, say), so it is never returned
+   * as the result: wait for the advertised retry and ask again, and fail if it is still pending.
+   */
   async getV2<T = any>(path: string, params?: Params): Promise<V2Result<T>> {
+    const deadline = Date.now() + this.pendingBudgetMs;
+    for (;;) {
+      const result = await this.fetchV2<T>(path, params);
+      if (!isPending(result.data, result.meta)) return result;
+      const wait = Math.min(5, Math.max(1, Number(result.meta.retry_after) || 2)) * 1000;
+      if (Date.now() + wait > deadline) {
+        throw new ApiError(`pending: the API is still computing ${path.replace(/^\/+/, "")}; ask again in a few seconds`, 202, "pending");
+      }
+      await sleep(wait);
+    }
+  }
+
+  private async fetchV2<T = any>(path: string, params?: Params): Promise<V2Result<T>> {
     const clean = path.replace(/^\/+/, "");
     const { status, ok, body, quota } = await this.request(this.url(`/api/v2/${clean}`, params));
 

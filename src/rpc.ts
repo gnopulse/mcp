@@ -112,9 +112,19 @@ function decode(rb: AbciResponseBase): string | Absent {
   if (rb.Error) {
     // The log is the error message followed by a Go stack trace; keep only the message.
     const log = typeof rb.Log === "string" ? rb.Log.trim() : "";
-    const reason = log ? log.split("Stack Trace:")[0].trim() || log : undefined;
-    return { absent: true, reason };
+    return { absent: true, reason: log ? readableReason(log) : undefined };
   }
   if (!rb.Data) return { absent: true };
   return Buffer.from(rb.Data, "base64").toString("utf8");
+}
+
+/**
+ * The node's message without its Go framing. A log reads `--= Error =--`, `Data: <go type>`,
+ * `Msg Traces:` with lines like `0  /path/errors.go:88 - package not found: gno.land/r/x`, then a
+ * stack trace; the text after the last trace's " - " is the message a caller can act on.
+ */
+export function readableReason(log: string): string {
+  const head = log.split("Stack Trace:")[0].trim() || log;
+  const traces = [...head.matchAll(/^\s*\d+\s+\S+:\d+ - (.+)$/gm)].map(m => m[1].trim());
+  return traces.length ? traces[traces.length - 1] : head;
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Wait for results the API is still computing (a cold wallet's token balances, for example) instead of returning its empty placeholder; still pending after 25 seconds is an error. Pending answers are not billed.
+- Chain query failures are tool errors with the node's one-line message: `gno_render` and `gno_eval` on a missing package, `gno_package_files` on an unknown path, `gno_get_balances` on a malformed address. An address with no account is still a zero-balance result.
+
 ## 0.3.3 (2026-10-28)
 
 - Add 36 read tools covering the rest of the v2 API: recent blocks, governance proposals and votes, validators, bridges and bridge transfers, GNOT wraps, realm graph, discoveries, libraries, GPAO queue, DEX analytics, volume series, pool candles, pool trades, multi-hop legs, swap quotes and routes, token directory, all prices, launchpad markets and quotes, launch snipers, CVD, wallet flows, known entities, wallet DeFi, wallet realms, wallet cluster, realms, functions, failed calls, sparklines and health. Requires the matching API release.

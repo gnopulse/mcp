@@ -45,7 +45,8 @@ export function registerChainTools(server: McpServer, rpc: RpcClient): void {
         const result = await rpc.qeval(`${pkgpath}.${expr}`);
         // A reason means the query itself was invalid, not that the value is empty.
         const reason = absentReason(result);
-        return ok({ pkgpath, expr, result: absentToNull(result), ...(reason ? { reason } : {}) });
+        if (reason) return fail(reason);
+        return ok({ pkgpath, expr, result: absentToNull(result) });
       }),
   );
 
@@ -67,7 +68,7 @@ export function registerChainTools(server: McpServer, rpc: RpcClient): void {
         const rendered = absentToNull(result);
         if (rendered !== null) return ok(rendered);
         const reason = absentReason(result);
-        return ok(reason ? `(no render output: ${reason})` : "(no render output)");
+        return reason ? fail(reason) : ok("(no render output)");
       }),
   );
 
@@ -93,11 +94,11 @@ export function registerChainTools(server: McpServer, rpc: RpcClient): void {
         }
         // Both absent with a reason means the pkgpath is invalid.
         const reason = filesStr === null && funcsStr === null ? absentReason(files) : undefined;
+        if (reason) return fail(reason);
         return ok({
           pkgpath,
           files: filesStr ? filesStr.split("\n").filter(Boolean) : [],
           functions,
-          ...(reason ? { reason } : {}),
         });
       }),
   );
@@ -116,13 +117,14 @@ export function registerChainTools(server: McpServer, rpc: RpcClient): void {
         const reason = absentReason(result);
         const raw = absentToNull(result);
         const parsed = raw !== null ? parseAminoAccount(raw) : null;
-        // A query error and an address with no account share the same shape.
+        // A rejected query (a malformed address) is an error; an address with no account is a fact.
+        if (reason) return fail(reason);
         if (parsed === null) {
           return ok({
             address,
             account: null,
             balances: [],
-            note: reason ?? "no on-chain account for this address (never transacted or not an auth account)",
+            note: "no on-chain account for this address (never transacted or not an auth account)",
           });
         }
         return ok({
@@ -132,7 +134,6 @@ export function registerChainTools(server: McpServer, rpc: RpcClient): void {
           sequence: parsed.sequence,
           public_key: parsed.public_key,
           account_raw: raw,
-          ...(reason ? { note: reason } : {}),
         });
       }),
   );
