@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5 (2026-10-28)
+
+- With `GNOPULSE_SIGNER=none` the write tools (`gno_call`, `gno_swap`, `gno_approve`, `gno_deploy`, `gno_confirm`) are no longer listed; they could only answer "execution disabled". `gno_agent_status` names them and how to enable them. The capability manifest marks them `requires: signer`.
+
 ## 0.3.4 (2026-10-28)
 
 - Wait for results the API is still computing (a cold wallet's token balances, for example) instead of returning its empty placeholder; still pending after 25 seconds is an error. Pending answers are not billed.

@@ -50,7 +50,8 @@ const CLA_REALM = "gno.land/r/sys/cla";
 const ENABLE_HINT =
   "Execution is disabled: this server is read/simulate-only and holds no keys. To enable on-chain " +
   "execution, the user runs the GnoPulse MCP locally with GNOPULSE_SIGNER=user-approval and a local " +
-  `gnotx signing service (see ${EXEC_GUIDE}). The key stays on the user's machine.`;
+  `gnotx signing service (see ${EXEC_GUIDE}); the write tools (gno_call, gno_swap, gno_approve, ` +
+  "gno_deploy, gno_confirm) are listed only then. The key stays on the user's machine.";
 
 export interface ExecutionDeps {
   gnotx: Gnotx;
@@ -198,7 +199,9 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         })
     );
 
-  if (deps.readOnly) return;
+  // Write tools need a signer. Without one they could only answer "execution disabled", so they
+  // are not listed at all; gno_agent_status explains how to enable them.
+  if (deps.readOnly || !signer) return;
 
   async function propose(intent: Intent): Promise<ToolResult> {
     if (!signer) return ok({ status: "execution_disabled", note: ENABLE_HINT });

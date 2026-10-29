@@ -1,5 +1,5 @@
 // Simulate-only mode (no signer): gno_simulate reaches the signing service,
-// gno_call is refused without broadcasting, and the chain id falls back to config.
+// write tools are not listed and gno_call is refused without broadcasting, and the chain id falls back to config.
 import { check, run, serverEnv, startMock, startStdioClient } from "./lib.mjs";
 
 await run(async () => {
@@ -31,11 +31,12 @@ await run(async () => {
       JSON.stringify(sim)
     );
 
-    const call = await client.callTool("gno_call", {
-      pkgpath: "gno.land/r/demo/x",
-      func: "Foo"
-    });
-    check("gno_call is denied without a signer", call.status === "execution_disabled", call.status);
+    const listed = (await client.request("tools/list", {})).result.tools.map((t) => t.name);
+    const writes = ["gno_call", "gno_swap", "gno_approve", "gno_deploy", "gno_confirm"];
+    check("write tools are not listed without a signer", writes.every((n) => !listed.includes(n)), listed.join(","));
+    check("simulation and status stay listed", listed.includes("gno_simulate") && listed.includes("gno_agent_status"));
+    const call = await client.request("tools/call", { name: "gno_call", arguments: { pkgpath: "gno.land/r/demo/x", func: "Foo" } });
+    check("gno_call is refused without a signer", !!call.error || call.result?.isError === true, JSON.stringify(call).slice(0, 200));
     check("gno_call never calls /execute", !hits.includes("/execute"));
   } finally {
     client.close();

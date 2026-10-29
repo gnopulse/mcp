@@ -1,5 +1,5 @@
 {
-  "status": "0.3.4: 0.3.3 plus pending-result waits and chain query errors reported as tool errors",
+  "status": "0.3.5: 0.3.4 with write tools listed only when a signer is configured",
   "tools": [
     {
       "name": "gno_agent_status",
@@ -19,7 +19,8 @@
       "name": "gno_approve",
       "source": "execution.ts",
       "transport": "local only",
-      "rest_paths": []
+      "rest_paths": [],
+      "requires": "signer"
     },
     {
       "name": "gno_blocks",
@@ -49,13 +50,15 @@
       "name": "gno_call",
       "source": "execution.ts",
       "transport": "local only",
-      "rest_paths": []
+      "rest_paths": [],
+      "requires": "signer"
     },
     {
       "name": "gno_confirm",
       "source": "execution.ts",
       "transport": "local only",
-      "rest_paths": []
+      "rest_paths": [],
+      "requires": "signer"
     },
     {
       "name": "gno_cvd",
@@ -69,7 +72,8 @@
       "name": "gno_deploy",
       "source": "execution.ts",
       "transport": "local only",
-      "rest_paths": []
+      "rest_paths": [],
+      "requires": "signer"
     },
     {
       "name": "gno_dev_activity",
@@ -461,7 +465,8 @@
       "name": "gno_swap",
       "source": "execution.ts",
       "transport": "local only",
-      "rest_paths": []
+      "rest_paths": [],
+      "requires": "signer"
     },
     {
       "name": "gno_swap_hops",

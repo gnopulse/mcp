@@ -97,7 +97,7 @@ The host must not sign receipts based on the model claiming approval or expose i
 | NFTs | `gno_grc721` `gno_nft_holdings` `gno_nft_collection` |
 | DEX | `gno_pools` `gno_pool_depth` `gno_pool_lp_providers` `gno_pool_ohlcv` `gno_pool_trades` `gno_dex_analytics` `gno_dex_series` `gno_swap_hops` `gno_dex_route` `gno_dex_quote` |
 | Analytics | `gno_smart_money` `gno_swap_signals` `gno_launch_radar` `gno_launch_snipers` `gno_mev` `gno_wash_trades` `gno_dev_activity` `gno_cvd` `gno_wallet_flows` `gno_known_entities` |
-| Execution | `gno_agent_status` `gno_simulate` `gno_call` `gno_swap` `gno_approve` `gno_deploy` `gno_confirm` |
+| Execution | `gno_agent_status` `gno_simulate`; with a signer configured, also `gno_call` `gno_swap` `gno_approve` `gno_deploy` `gno_confirm` |
 
 Data and analytics tools call the GnoPulse API with `GNOPULSE_API_KEY`.
 
@@ -118,7 +118,7 @@ Data access needs no wallet configuration. Execution requires an explicit agent 
 | `GNO_RPC_URLS` | public gnoland-1 RPCs | Comma-separated RPC endpoints, tried in order |
 | `GNO_CHAIN_ID` | `gnoland-1` | Also passed to the signer by the launcher |
 | `GNO_GRC20_REGISTRY` | `gno.land/r/nt/grc20reg/v0` | GRC20 registry realm |
-| `GNOPULSE_SIGNER` | `none` | `user-approval`, `microservice`, `tee`, or `none` (simulate only) |
+| `GNOPULSE_SIGNER` | `none` | `user-approval`, `microservice`, `tee`, or `none` (reads and simulation only; write tools are not listed) |
 | `GNOPULSE_POLICY_MAX_SEND_UGNOT` | `5000000` with `npx`, else none | Maximum native ugnot sent per transaction. Does not cover GRC20 approve or swap amounts |
 | `GNOPULSE_POLICY_ALLOW_REALMS` | | Only these realms (comma-separated) |
 | `GNOPULSE_POLICY_DENY_REALMS` | | Never these realms |
