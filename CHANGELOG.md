@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 (2026-10-28)
 
 - Wait for results the API is still computing (a cold wallet's token balances, for example) instead of returning its empty placeholder; still pending after 25 seconds is an error. Pending answers are not billed.
 - Chain query failures are tool errors with the node's one-line message: `gno_render` and `gno_eval` on a missing package, `gno_package_files` on an unknown path, `gno_get_balances` on a malformed address. An address with no account is still a zero-balance result.

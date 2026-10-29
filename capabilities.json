@@ -1,5 +1,5 @@
 {
-  "status": "0.3.3: 0.3.2 plus the full v2 read surface and pool market figures",
+  "status": "0.3.4: 0.3.3 plus pending-result waits and chain query errors reported as tool errors",
   "tools": [
     {
       "name": "gno_agent_status",
