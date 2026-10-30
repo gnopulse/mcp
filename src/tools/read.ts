@@ -12,7 +12,7 @@ const limitParam = (max: number) => z.number().int().min(1).max(max).optional();
 export function registerReadTools(server: McpServer, api: ApiClient): void {
   server.registerTool("gno_api_usage", {
     title: "API quota",
-    description: "Read current quota headers through one standard block-list request. This request consumes its normal cost units.",
+    description: "Read current limits (x-quota-*, x-ratelimit-*, and x-credits-remaining on prepaid credits) through one standard block-list request. This request consumes its normal cost units.",
     inputSchema: {},
   }, () => guard(async () => ok((await api.getV2("blocks", { limit: 1 })).meta.quota)));
 

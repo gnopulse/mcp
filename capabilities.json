@@ -1,5 +1,5 @@
 {
-  "status": "0.3.5: 0.3.4 with write tools listed only when a signer is configured",
+  "status": "0.3.6: 0.3.5 with bare realm token keys and limit hints on refusals",
   "tools": [
     {
       "name": "gno_agent_status",

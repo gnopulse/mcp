@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6 (2026-10-30)
+
+- `gno_token_metadata` and `gno_token_balance` accept a realm path that registers one token (`gno.land/r/gnoswap/gns`) as well as its registry key, name the keys when a realm registers several, and point native `ugnot` to `gno_get_balances` and `gno_prices`.
+- Refused calls say when to retry and what is left: the error carries the `Retry-After` wait, the prepaid credit balance and the daily units remaining. `x-credits-remaining` is passed through with the other limit headers.
+
 ## 0.3.5 (2026-10-28)
 
 - With `GNOPULSE_SIGNER=none` the write tools (`gno_call`, `gno_swap`, `gno_approve`, `gno_deploy`, `gno_confirm`) are no longer listed; they could only answer "execution disabled". `gno_agent_status` names them and how to enable them. The capability manifest marks them `requires: signer`.

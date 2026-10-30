@@ -23,3 +23,15 @@ test('verified Onyx placeholder correction preserves raw supply and legitimate z
  const unknown=value(await tools(rpc,'unknown-chain').gno_token_metadata({token:'gno.land/r/gnoland/wugnot.wugnot'}));
  assert.equal(unknown.decimals,0);
 });
+test('a bare realm resolves to its one registry key and native ugnot is pointed elsewhere',async()=>{
+ const render='[gns](/r/nt/grc20reg/v0:gno.land/r/gnoswap/gns.GNS) [a](/r/nt/grc20reg/v0:gno.land/r/demo/fac.A) [b](/r/nt/grc20reg/v0:gno.land/r/demo/fac.B)';
+ const seen=[];
+ const rpc={qrender:async()=>render,qeval:async expr=>{seen.push(expr);return expr.includes('BalanceOf')?'(982581 uint64)':'(1 int64)'}};
+ const handlers=tools(rpc);
+ assert.equal(value(await handlers.gno_token_balance({token:'gno.land/r/gnoswap/gns',address:'g1alice'})).token,'gno.land/r/gnoswap/gns.GNS');
+ assert.ok(seen.every(e=>e.includes('"gno.land/r/gnoswap/gns.GNS"')));
+ const several=await handlers.gno_token_metadata({token:'gno.land/r/demo/fac'});
+ assert.equal(several.isError,true);assert.match(several.content[0].text,/fac\.A, gno\.land\/r\/demo\/fac\.B/);
+ const native=await handlers.gno_token_metadata({token:'ugnot'});
+ assert.equal(native.isError,true);assert.match(native.content[0].text,/gno_get_balances/);
+});

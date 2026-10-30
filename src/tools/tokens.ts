@@ -38,6 +38,26 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
   const readToken = async (key: string, expr: string): Promise<GnoScalar> =>
     parseGnoScalar(absentToNull(await rpc.qeval(`${registry}.Get(${quote(key)}).${expr}`)));
 
+  const registryKeys = async (): Promise<string[] | null> => {
+    const render = absentToNull(await rpc.qrender(registry, ""));
+    return render === null ? null : [...new Set([...render.matchAll(REGISTRY_KEY_RE)].map((m) => m[1]))];
+  };
+
+  // Accept what people type: native ugnot is refused with a pointer, and a bare realm that
+  // registers exactly one token resolves to that token's registry key.
+  const resolveKey = async (token: string): Promise<string> => {
+    if (token === "ugnot" || token === "gnot")
+      throw new Error("ugnot is native GNOT, not a GRC20 token; use gno_get_balances for balances and gno_prices for price");
+    if (token.slice(token.lastIndexOf("/") + 1).includes(".")) return token;
+    const keys = await registryKeys().catch(() => null);
+    if (keys === null || keys.includes(token)) return token;
+    const matches = keys.filter((k) => k.startsWith(`${token}.`));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1)
+      throw new Error(`${token} registers several tokens (${matches.join(", ")}); pass one of those keys`);
+    return token;
+  };
+
   server.registerTool(
     "gno_token_registry",
     {
@@ -49,9 +69,8 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
     },
     () =>
       guard(async () => {
-        const render = absentToNull(await rpc.qrender(registry, ""));
-        if (render === null) throw new Error("Token registry is unavailable or unsupported on this network");
-        const keys = [...new Set([...render.matchAll(REGISTRY_KEY_RE)].map((m) => m[1]))];
+        const keys = await registryKeys();
+        if (keys === null) throw new Error("Token registry is unavailable or unsupported on this network");
         return ok({ registry, count: keys.length, tokens: keys });
       }),
   );
@@ -68,14 +87,14 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
         token: z
           .string()
           .describe(
-            "The exact key string from gno_token_registry output; do not construct it. The key " +
-              "format varies by chain (a bare realm path, or \"<realm path>.<symbol>\"), and a wrong " +
-              "key returns nulls rather than an error.",
+            "A key from gno_token_registry output (\"<realm path>.<symbol>\" on mainnet), or a realm " +
+              "path that registers exactly one token, e.g. gno.land/r/gnoswap/gns.",
           ),
       },
     },
-    ({ token }) =>
+    ({ token: input }) =>
       guard(async () => {
+        const token = await resolveKey(input);
         const [name, symbol, decimals, totalSupply] = await Promise.all([
           readToken(token, "GetName()"),
           readToken(token, "GetSymbol()"),
@@ -109,12 +128,13 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
         "Exact on-chain GRC20 balance of an address, in raw units (divide by 10^decimals). " +
         "For native ugnot use gno_get_balances.",
       inputSchema: {
-        token: z.string().describe("the exact key string from gno_token_registry output (see gno_token_metadata)"),
+        token: z.string().describe("a gno_token_registry key, or a realm path that registers one token (see gno_token_metadata)"),
         address: z.string().describe("g1… address"),
       },
     },
-    ({ token, address }) =>
+    ({ token: input, address }) =>
       guard(async () => {
+        const token = await resolveKey(input);
         const balance = await readToken(token, `BalanceOf(${quote(address)})`);
         if (balance === null) throw new Error("Token balance could not be verified; no zero balance is asserted");
         return ok({ token, address, balance_raw: balance, note: "raw units; divide by 10^decimals" });

@@ -55,6 +55,15 @@ function isPending(data: unknown, meta: Record<string, any>): boolean {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/** What a refused call needs to act on: when to retry, and what is left. */
+function limitHint(quota: Record<string, string>): string {
+  const parts: string[] = [];
+  if (quota["retry-after"]) parts.push(`retry after ${quota["retry-after"]}s`);
+  if (quota["x-credits-remaining"] !== undefined) parts.push(`prepaid credits left: ${quota["x-credits-remaining"]}`);
+  if (quota["x-quota-daily-remaining"] !== undefined) parts.push(`daily units left: ${quota["x-quota-daily-remaining"]}`);
+  return parts.length ? ` (${parts.join("; ")})` : "";
+}
+
 export class ApiClient {
   constructor(
     private readonly cfg: Config,
@@ -93,8 +102,8 @@ export class ApiClient {
     const error = parsed?.error;
     if (error) {
       // Auth and rate-limit rejections carry a plain string rather than {code, message}.
-      if (typeof error === "string") throw new ApiError(error, status);
-      throw new ApiError(`${error.code ?? "error"}: ${error.message ?? "unknown"}`, status, error.code);
+      if (typeof error === "string") throw new ApiError(error + limitHint(quota), status);
+      throw new ApiError(`${error.code ?? "error"}: ${error.message ?? "unknown"}${limitHint(quota)}`, status, error.code);
     }
     if (!ok) throw new ApiError(`v2 ${clean}: HTTP ${status}: ${body.slice(0, 200)}`, status);
     const nested = parsed?.data?.error;
@@ -196,7 +205,8 @@ export class ApiClient {
     const resp = await fetch(url, { headers, signal: AbortSignal.timeout(this.cfg.timeoutMs) });
     const quota: Record<string, string> = {};
     resp.headers.forEach((value, name) => {
-      if (name.startsWith("x-quota-") || name.startsWith("x-ratelimit-") || name === "retry-after") quota[name] = value;
+      if (name.startsWith("x-quota-") || name.startsWith("x-ratelimit-") || name.startsWith("x-credits-") || name === "retry-after")
+        quota[name] = value;
     });
     return { status: resp.status, ok: resp.ok, body: await resp.text(), quota };
   }

@@ -44,8 +44,13 @@ export class Meter {
         return { error: "Usage authorization did not return a reservation. Retry shortly" };
       return { error: null, reservation: typeof verdict.reservation === "string" ? verdict.reservation : undefined };
     }
-    const body = (await resp.json().catch(() => null)) as { reason?: unknown } | null;
-    return { error: body?.reason ? String(body.reason) : `rate or quota limit (HTTP ${resp.status})` };
+    const body = (await resp.json().catch(() => null)) as { reason?: unknown; retry_after?: unknown } | null;
+    const retry = resp.headers.get("retry-after") ?? (body?.retry_after ? String(body.retry_after) : null);
+    const credits = resp.headers.get("x-credits-remaining");
+    const hint = [retry ? `retry after ${retry}s` : "", credits !== null ? `prepaid credits left: ${credits}` : ""]
+      .filter(Boolean).join("; ");
+    const reason = body?.reason ? String(body.reason) : `rate or quota limit (HTTP ${resp.status})`;
+    return { error: hint ? `${reason} (${hint})` : reason };
   }
 
   async execute(tool: string, handler: () => unknown): Promise<unknown> {
