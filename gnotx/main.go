@@ -54,7 +54,7 @@ const (
 	routerPath = "gno.land/r/gnoswap/router"
 
 	// minFeeUgnot is the smallest fee gnotx will attach to a transaction.
-	minFeeUgnot = 100000
+	minFeeUgnot = 10000
 	// probeGasWanted is the gas ceiling for the estimation simulation.
 	probeGasWanted = 500_000_000
 	// defGasPriceMilli is the default gas price for -gas-fee=auto, in milli-ugnot per gas unit.
@@ -87,6 +87,9 @@ type config struct {
 	maxStorageDepositUgnot               int64
 	memo                                 string
 	broadcast                            bool
+	// chainPrice is the chain's minimum gas price: chainPrice.Amount ugnot per chainPriceGas gas.
+	chainPrice    int64
+	chainPriceGas int64
 }
 
 func (c *config) bind(fs *flag.FlagSet) {
@@ -113,20 +116,52 @@ func probeFee(gasFee string) string {
 	return gasFee
 }
 
+// useChainGasPrice reads the chain's current minimum gas price for auto fees. A failed
+// read keeps the default price.
+func (c *config) useChainGasPrice(cli *gnoclient.Client) {
+	if !isAutoFee(c.gasFee) || c.chainPriceGas > 0 || cli.RPCClient == nil {
+		return
+	}
+	qres, err := cli.RPCClient.ABCIQuery(context.Background(), "auth/gasprice", nil)
+	if err != nil || qres.Response.Error != nil {
+		return
+	}
+	var gp struct {
+		Gas   int64  `json:"gas,string"`
+		Price string `json:"price"`
+	}
+	if json.Unmarshal(qres.Response.Data, &gp) != nil || gp.Gas <= 0 {
+		return
+	}
+	price, err := std.ParseCoin(gp.Price)
+	if err != nil || price.Denom != "ugnot" || price.Amount <= 0 {
+		return
+	}
+	c.chainPrice, c.chainPriceGas = price.Amount, gp.Gas
+}
+
 // feeFor returns the fee coin for a broadcast at gasWanted. An explicit -gas-fee
-// is used as is; with -gas-fee=auto the fee is gasWanted times the gas price
-// (GNOTX_GAS_PRICE_MILLI, milli-ugnot per gas), floored at minFeeUgnot.
+// is used as is. With -gas-fee=auto the price is GNOTX_GAS_PRICE_MILLI (milli-ugnot
+// per gas) if set, else the chain's minimum price plus 20% because it floats with
+// demand, else defGasPriceMilli.
 func (c *config) feeFor(gasWanted int64) string {
 	if !isAutoFee(c.gasFee) {
 		return c.gasFee
 	}
-	price := int64(defGasPriceMilli)
 	if v := os.Getenv("GNOTX_GAS_PRICE_MILLI"); v != "" {
 		if p, err := strconv.ParseInt(v, 10, 64); err == nil && p > 0 {
-			price = p
+			return feeCoin(gasWanted * p / 1000)
 		}
 	}
-	fee := gasWanted * price / 1000
+	if c.chainPriceGas > 0 {
+		den := c.chainPriceGas * 10
+		return feeCoin((gasWanted*c.chainPrice*12 + den - 1) / den)
+	}
+	return feeCoin(gasWanted * defGasPriceMilli / 1000)
+}
+
+// feeCoin floors an auto fee at minFeeUgnot.
+func feeCoin(fee int64) string {
 	if fee < minFeeUgnot {
 		fee = minFeeUgnot
 	}
@@ -570,6 +605,7 @@ func runAddpkg(cli *gnoclient.Client, c *config, addr string, msg vm.MsgAddPacka
 	if err != nil {
 		return fmt.Errorf("query account (funded? CLA signed?): %w", err)
 	}
+	c.useChainGasPrice(cli)
 	gasWanted := c.gasWanted
 	probe := gasWanted
 	if probe <= 0 {
@@ -1097,6 +1133,7 @@ func simulateUnsigned(cli *gnoclient.Client, c *config, addr, label string, msg 
 	if pub.Address() != caller {
 		return nil, 0, fmt.Errorf("public key does not match simulation caller")
 	}
+	c.useChainGasPrice(cli)
 	gas := c.gasWanted
 	if gas <= 0 {
 		gas = probeGasWanted
@@ -1180,6 +1217,13 @@ func prepareCall(cli *gnoclient.Client, c *config, addr, label string, msg vm.Ms
 		}
 		pub = info.GetPubKey()
 	}
+	// Sign at the approved gas limit. A fresh estimate would price a transaction that now
+	// carries the storage ceiling, which costs more gas than the preview did.
+	if c.broadcast && c.maxGasWanted > 0 && c.gasWanted <= 0 {
+		bound := *c
+		bound.gasWanted = c.maxGasWanted
+		c = &bound
+	}
 	r, seq, err := simulateUnsigned(cli, c, addr, label, msg, pub)
 	if err != nil {
 		return nil, seq, nil, false, err
@@ -1187,7 +1231,7 @@ func prepareCall(cli *gnoclient.Client, c *config, addr, label string, msg vm.Ms
 	if !r.OK || !c.broadcast {
 		return nil, seq, r, !r.OK, nil
 	}
-	if c.maxGasWanted > 0 && r.GasWanted > c.maxGasWanted {
+	if c.maxGasWanted > 0 && (r.GasWanted > c.maxGasWanted || r.GasUsed > r.GasWanted) {
 		return nil, seq, r, false, fmt.Errorf("gas estimate exceeds the approved preview; propose again")
 	}
 	fee, err := strconv.ParseInt(r.Extra["estimated_total_fee_ugnot"], 10, 64)

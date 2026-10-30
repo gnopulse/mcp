@@ -14,7 +14,7 @@ import { approvalChallenge, CLIENT_APPROVAL_META, verifyClientApproval } from ".
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SignerIdentityError, type Gnotx, type GnotxEnvelope } from "../gnotx.js";
-import type { RpcClient } from "../rpc.js";
+import { isAbsent, type RpcClient } from "../rpc.js";
 import type { Intent, PolicyEngine, Signer } from "../signer/types.js";
 import type { ApprovalStore } from "../signer/approvals.js";
 import { ConfigurablePolicy } from "../signer/policy.js";
@@ -44,7 +44,10 @@ function fundingHint(chainId: string): string {
   return faucet ? ` (faucet: ${faucet})` : "";
 }
 const EXEC_GUIDE = "https://gnopulse.xyz/quickstart";
-const GAS_ESTIMATE = "0.2 to 0.7 GNOT";
+// Measured on gnoland-1: a call costs about 0.02 to 0.3 GNOT in gas plus any storage it adds;
+// a wallet's first GnoSwap swap also locks about 1.9 GNOT of storage deposit.
+const GAS_ESTIMATE = "under 0.5 GNOT, and a first GnoSwap swap locks about 2 GNOT more as a storage deposit";
+const FUNDING_ESTIMATE = "3 GNOT covers a first swap";
 const CLA_REALM = "gno.land/r/sys/cla";
 
 const ENABLE_HINT =
@@ -62,6 +65,8 @@ export interface ExecutionDeps {
   approvals: ApprovalStore;
   /** Configured chain id, used when the signing service does not report one. */
   chainId: string;
+  /** Registry key for a token as typed; a bare realm with one token resolves to it. */
+  resolveToken?: (token: string) => Promise<string>;
   agentAddress?: string;
   agentId?: string;
   approvalPublicKey?: string;
@@ -73,27 +78,30 @@ export interface ExecutionDeps {
 export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): void {
   const { gnotx, rpc, policy, signer, approvals } = deps;
 
-  /** The signing service's address and chain, plus that address's on-chain account if it has one. */
+  /**
+   * The signing service's address and chain, plus that address's on-chain account if it has one.
+   * `unfunded` is true when the chain has no account for the address: it has never received GNOT.
+   */
   async function agentAccount(): Promise<{
     address: string | null;
     chainId: string;
     account: AminoAccount | null;
+    unfunded: boolean;
   }> {
     const address = deps.agentAddress ?? null;
     const chainId = deps.chainId;
     try {
       const health = await gnotx.verifiedHealth();
-      if (!health.ok || !address) return { address, chainId, account: null };
+      if (!health.ok || !address) return { address, chainId, account: null, unfunded: false };
     } catch (e) {
       if (e instanceof SignerIdentityError) throw e;
-      return { address, chainId, account: null };
+      return { address, chainId, account: null, unfunded: false };
     }
-    const raw = await rpc.authAccount(address).then(absentToNull, () => null);
-    return {
-      address,
-      chainId,
-      account: raw !== null ? parseAminoAccount(raw) : null
-    };
+    const raw = await rpc.authAccount(address).catch(() => null);
+    const account = typeof raw === "string" ? parseAminoAccount(raw) : null;
+    // The chain answers JSON null for an address it has no account for.
+    const missing = raw === "null" || (isAbsent(raw) && !raw.reason);
+    return { address, chainId, account, unfunded: account === null && missing };
   }
 
   server.registerTool(
@@ -108,8 +116,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
     },
     () =>
       guard(async () => {
-        const { address, chainId, account } = await agentAccount();
-        const balanceUgnot = account ? ugnotBalance(account) : null;
+        const { address, chainId, account, unfunded } = await agentAccount();
+        const balanceUgnot = account ? ugnotBalance(account) : unfunded ? "0" : null;
         const funded = balanceUgnot !== null && balanceUgnot !== "0";
 
         let nextStep: string;
@@ -212,8 +220,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
     // An unfunded address has no on-chain account, so simulation would fail with an opaque
     // error. Report the address and faucet instead.
     if (signer) {
-      const { address, chainId, account } = await agentAccount();
-      if (address && account && ugnotBalance(account) === "0") {
+      const { address, chainId, account, unfunded } = await agentAccount();
+      if (address && (unfunded || (account && ugnotBalance(account) === "0"))) {
         return ok({
           status: "needs_funding",
           intent: intent.summary,
@@ -221,7 +229,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           faucet: faucetFor(chainId),
           message:
             `The agent wallet ${address} needs gas before it can act. Offer the user to send a small ` +
-            `amount of GNOT to that address${fundingHint(chainId)}; ${GAS_ESTIMATE} is typically enough.`
+            `amount of GNOT to that address${fundingHint(chainId)}; ${FUNDING_ESTIMATE}.`
         });
       }
     }
@@ -367,32 +375,47 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
       description:
         "Swap on GnoSwap (router.ExactInSwapRoute) from the agent's own wallet. Simulates and checks " +
         "policy, then broadcasts (autonomous signer), returns an approval_token for gno_confirm " +
-        "(human-approval signer), or returns the preview (simulate-only). The input token must first be " +
-        "approved to the router (gno_approve). If unfunded, returns status:needs_funding with the address and faucet.",
+        "(human-approval signer), or returns the preview (simulate-only). Tokens are registry keys such as " +
+        "gno.land/r/gnoswap/gns.GNS; a bare realm with one token is resolved. GNOT must be wrapped first " +
+        "(gno_call gno.land/r/gnoland/wugnot Deposit) and swapped as gno.land/r/gnoland/wugnot.wugnot. The input " +
+        "token must first be approved to the router (gno_approve). Pass route and quote from gno_dex_route for " +
+        "the best path. If unfunded, returns status:needs_funding with the address and faucet.",
       inputSchema: {
-        tokenIn: z.string().describe("input token pkgpath"),
-        tokenOut: z.string().describe("output token pkgpath"),
+        tokenIn: z.string().describe("input token registry key, e.g. gno.land/r/gnoland/wugnot.wugnot"),
+        tokenOut: z.string().describe("output token registry key, e.g. gno.land/r/gnoswap/gns.GNS"),
         amountIn: z.string().describe("exact input amount, raw units"),
         minOut: z.string().describe("minimum output (slippage floor), raw units"),
-        fee: z.string().optional().describe("fee tier 100/500/3000/10000 (default 500)"),
+        fee: z.string().optional().describe("single-hop fee tier 100/500/3000/10000 (default 500); ignored with route"),
+        route: z.string().optional().describe("route_arr from gno_dex_route"),
+        quote: z.string().optional().describe("quote_arr from gno_dex_route (default 100)"),
         deadlineSecs: z.number().int().optional().describe("seconds until expiry (default 120)")
       }
     },
-    ({ tokenIn, tokenOut, amountIn, minOut, fee, deadlineSecs }) =>
+    ({ tokenIn, tokenOut, amountIn, minOut, fee, route, quote, deadlineSecs }) =>
       guard(async () => {
+        const resolve = async (token: string) => {
+          if (token === "ugnot" || token === "gnot")
+            throw new Error(
+              "GnoSwap trades wrapped GNOT: call gno.land/r/gnoland/wugnot Deposit, approve it to the router, " +
+                "then swap gno.land/r/gnoland/wugnot.wugnot"
+            );
+          return deps.resolveToken ? deps.resolveToken(token) : token;
+        };
         const swap = {
-          tokenIn,
-          tokenOut,
+          tokenIn: await resolve(tokenIn),
+          tokenOut: await resolve(tokenOut),
           amountIn,
           minOut,
           fee,
+          route,
+          quote,
           deadlineSecs,
           deadline: Math.floor(Date.now() / 1000) + (deadlineSecs ?? 120)
         };
         const intent: Intent = {
           kind: "swap",
           swap,
-          summary: `swap ${amountIn} ${tokenIn} → ${tokenOut} (minOut ${minOut}, fee ${fee ?? "500"})`
+          summary: `swap ${amountIn} ${swap.tokenIn} → ${swap.tokenOut} (minOut ${minOut}, ${route ? `route ${route}` : `fee ${fee ?? "500"}`})`
         };
         return propose(intent);
       })

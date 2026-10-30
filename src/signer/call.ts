@@ -15,7 +15,7 @@ export function swapCallArgs(s: SwapParams): string[] {
   const fee = s.fee ?? DEFAULT_FEE_TIER;
   const route = s.route ?? `${s.tokenIn}:${s.tokenOut}:${fee}`;
   const deadline = String(s.deadline ?? Math.floor(Date.now() / 1000) + (s.deadlineSecs ?? DEFAULT_DEADLINE_SECS));
-  return [s.tokenIn, s.tokenOut, s.amountIn, route, "100", s.minOut, deadline, ""];
+  return [s.tokenIn, s.tokenOut, s.amountIn, route, s.quote ?? "100", s.minOut, deadline, ""];
 }
 
 /** Derive targets from the operation rather than trusting duplicate metadata. */

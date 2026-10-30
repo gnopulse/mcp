@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,6 +29,7 @@ type simulationRPC struct {
 	fail        bool
 	simulations int
 	deposits    []int64
+	gasBySize   bool
 }
 
 func (r *simulationRPC) Status(context.Context, *int64) (*ctypes.ResultStatus, error) {
@@ -56,6 +58,10 @@ func (r *simulationRPC) ABCIQuery(_ context.Context, path string, data []byte) (
 		r.t.Fatal("wrong caller public key")
 	}
 	result := abci.ResponseDeliverTx{GasUsed: 10000}
+	if r.gasBySize {
+		// The chain charges gas per transaction byte.
+		result.GasUsed += int64(len(data)) * 10
+	}
 	if len(r.deposits) > 0 {
 		i := r.simulations - 1
 		if i >= len(r.deposits) {
@@ -229,5 +235,56 @@ func TestStorageGrowthAndCombinedCostNeverSign(t *testing.T) {
 				t.Fatal("signed beyond approved total or storage ceiling")
 			}
 		})
+	}
+}
+
+func TestApprovedPreviewSignsAtItsOwnGasLimit(t *testing.T) {
+	pub := secp256k1.GenPrivKey().PubKey()
+	msg := vm.MsgCall{Caller: pub.Address(), PkgPath: "gno.land/r/demo/x", Func: "Ping"}
+	preview := &gnoclient.Client{RPCClient: &simulationRPC{t: t, pub: pub, deposits: []int64{206100}, gasBySize: true}}
+	r, _, err := simulateUnsigned(preview, &config{chainID: "onyx-1", gasFee: "auto"}, pub.Address().String(), "Ping", msg, pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fee, _ := strconv.ParseInt(r.Extra["estimated_total_fee_ugnot"], 10, 64)
+	storage, _ := strconv.ParseInt(r.Extra["storage_deposit_limit_ugnot"], 10, 64)
+
+	signer := &countingSigner{pub: pub}
+	cli := &gnoclient.Client{Signer: signer, RPCClient: &simulationRPC{t: t, pub: pub, deposits: []int64{206100}, gasBySize: true}}
+	c := &config{chainID: "onyx-1", gasFee: "auto", broadcast: true, maxGasWanted: r.GasWanted, maxFeeUgnot: fee, maxStorageDepositUgnot: storage}
+	if _, _, _, _, err := prepareCall(cli, c, pub.Address().String(), "Ping", msg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if signer.signs != 1 || signer.tx.Fee.GasWanted != r.GasWanted {
+		t.Fatalf("signed %d times at gas %d, approved %d", signer.signs, signer.tx.Fee.GasWanted, r.GasWanted)
+	}
+}
+
+type pricedRPC struct {
+	*simulationRPC
+	price string
+}
+
+func (r *pricedRPC) ABCIQuery(ctx context.Context, path string, data []byte) (*ctypes.ResultABCIQuery, error) {
+	if path == "auth/gasprice" {
+		out := &ctypes.ResultABCIQuery{}
+		out.Response.Data = []byte(`{"gas":"1000","price":"` + r.price + `"}`)
+		return out, nil
+	}
+	return r.simulationRPC.ABCIQuery(ctx, path, data)
+}
+
+func TestAutoFeeFollowsTheChainGasPrice(t *testing.T) {
+	pub := secp256k1.GenPrivKey().PubKey()
+	msg := vm.MsgCall{Caller: pub.Address(), PkgPath: "gno.land/r/demo/x", Func: "Ping"}
+	cli := &gnoclient.Client{RPCClient: &pricedRPC{&simulationRPC{t: t, pub: pub}, "1ugnot"}}
+	c := &config{chainID: "onyx-1", gasFee: "auto", gasWanted: 200_000_000}
+	r, _, err := simulateUnsigned(cli, c, pub.Address().String(), "Ping", msg, pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 200M gas at 1 ugnot per 1000 gas, plus the 20% margin.
+	if r.Extra["estimated_fee_ugnot"] != "240000" {
+		t.Fatalf("fee %s", r.Extra["estimated_fee_ugnot"])
 	}
 }

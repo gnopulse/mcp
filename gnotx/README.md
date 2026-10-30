@@ -55,9 +55,13 @@ The default `-home` matches gnokey: the user config directory joined with
 `gno`, which is `~/Library/Application Support/gno` on macOS, `~/.config/gno`
 on Linux and `%AppData%\gno` on Windows.
 
-With `-gas-fee auto`, the fee is `gas_wanted * price / 1000` ugnot, where
-`price` is `GNOTX_GAS_PRICE_MILLI` (default `13`), with a minimum of
-`100000ugnot`.
+With `-gas-fee auto`, the fee follows the chain's current minimum gas price
+(`auth/gasprice`) plus 20%, since that price moves with demand. Set
+`GNOTX_GAS_PRICE_MILLI` (milli-ugnot per gas) to override it. If the chain
+price cannot be read, the price is `13`. The fee is at least `10000ugnot`.
+
+An execution with an approved gas limit signs at exactly that limit, and is
+refused if a fresh simulation uses more gas than it.
 
 ## Commands
 

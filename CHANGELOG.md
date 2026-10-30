@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.7 (2026-10-30)
+
+From the first end-to-end agent wallet run on mainnet.
+
+- Approved and autonomous transactions can be sent. 0.3.6 refused every one with "gas estimate exceeds the approved preview": the signer re-estimated gas for a transaction that now carried its storage ceiling, which costs slightly more. An approved execution now signs at the approved gas limit.
+- Auto fees follow the chain's gas price instead of a fixed rate tuned for an old testnet. On gnoland-1 that is about 12 times cheaper: a GNOT wrap paid 0.18 GNOT in gas and now pays 0.017, a swap 3 GNOT and now 0.27. The minimum fee is 0.01 GNOT, down from 0.1.
+- A new agent wallet reads as unfunded, with its address, in `gno_agent_status` and in every write tool. It used to read as "balance unavailable" and the write tools failed with "unknown address".
+- `gno_swap` accepts a bare realm (`gno.land/r/gnoswap/gns`) and resolves it to its registry key, takes `route` and `quote` from `gno_dex_route`, and explains that native GNOT must be wrapped first.
+
 ## 0.3.6 (2026-10-30)
 
 - `gno_token_metadata` and `gno_token_balance` accept a realm path that registers one token (`gno.land/r/gnoswap/gns`) as well as its registry key, name the keys when a realm registers several, and point native `ugnot` to `gno_get_balances` and `gno_prices`.

@@ -16,7 +16,7 @@ import { registerReadTools } from "./tools/read.js";
 import { registerV2Tools } from "./tools/v2.js";
 import { registerDatasetTools } from "./tools/datasets.js";
 import { registerChainTools } from "./tools/chain.js";
-import { registerTokenTools } from "./tools/tokens.js";
+import { registerTokenTools, tokenKeys } from "./tools/tokens.js";
 import { registerExecutionTools } from "./tools/execution.js";
 
 export interface SharedDeps {
@@ -48,6 +48,7 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
     signer: deps.signer,
     approvals: deps.approvals,
     chainId: cfg.chainId,
+    resolveToken: tokenKeys(deps.rpc, cfg.grc20Registry).resolve,
     agentAddress: cfg.agentAddress,
     agentId: cfg.agentId,
     approvalPublicKey: cfg.approvalPublicKey,

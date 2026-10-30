@@ -20,6 +20,8 @@ export interface SwapParams {
   fee?: string;
   /** Explicit route "in:out:fee"; overrides the single-hop route. */
   route?: string;
+  /** Percentage of amountIn per route, comma-separated for a split route. Defaults to "100". */
+  quote?: string;
   /** Seconds until the swap expires. Defaults to 120. */
   deadlineSecs?: number;
   /** Absolute deadline fixed before preview and human consent. */

@@ -66,3 +66,29 @@ test("approved swap deadline is stable across later execution", () => {
   };
   assert.equal(swapCallArgs(swap)[6], "1700000000");
 });
+
+test("swapCallArgs passes a split route's quote", () => {
+  const args = swapCallArgs({ tokenIn: "A", tokenOut: "C", amountIn: "1", minOut: "1", route: "A:B:3000,A:C:500", quote: "50,50" });
+  assert.equal(args[3], "A:B:3000,A:C:500");
+  assert.equal(args[4], "50,50");
+});
+
+test("gno_swap resolves bare realms to registry keys and refuses native GNOT", async () => {
+  const { registerExecutionTools } = await import("../dist/tools/execution.js");
+  const handlers = {};
+  let seen;
+  registerExecutionTools({ registerTool(name, _c, fn) { handlers[name] = fn; } }, {
+    gnotx: {},
+    rpc: {},
+    policy: { check: async (intent) => { seen = intent; return { allow: false, reason: "stop" }; } },
+    signer: { requiresApproval: true },
+    approvals: {},
+    chainId: "gnoland-1",
+    resolveToken: async (t) => ({ "gno.land/r/gnoland/wugnot": "gno.land/r/gnoland/wugnot.wugnot", "gno.land/r/gnoswap/gns": "gno.land/r/gnoswap/gns.GNS" })[t] ?? t
+  });
+  await handlers.gno_swap({ tokenIn: "gno.land/r/gnoland/wugnot", tokenOut: "gno.land/r/gnoswap/gns", amountIn: "5", minOut: "1", fee: "3000" });
+  assert.equal(seen.args[3], "gno.land/r/gnoland/wugnot.wugnot:gno.land/r/gnoswap/gns.GNS:3000");
+  const r = await handlers.gno_swap({ tokenIn: "ugnot", tokenOut: "gno.land/r/gnoswap/gns", amountIn: "5", minOut: "1" });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /wrapped GNOT/);
+});

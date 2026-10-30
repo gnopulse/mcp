@@ -34,28 +34,41 @@ const REGISTRY_KEY_RE = /grc20reg(?:\/[^:\s]*)?:([^)\s]+)/g;
 
 const quote = (s: string) => JSON.stringify(s);
 
-export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: string, chainId = "gnoland-1"): void {
-  const readToken = async (key: string, expr: string): Promise<GnoScalar> =>
-    parseGnoScalar(absentToNull(await rpc.qeval(`${registry}.Get(${quote(key)}).${expr}`)));
-
-  const registryKeys = async (): Promise<string[] | null> => {
+/**
+ * Token keys as the registry spells them. A bare realm that registers exactly one token
+ * resolves to that token's key; a full key, or any token when the registry is unreadable,
+ * passes through unchanged.
+ */
+export function tokenKeys(rpc: RpcClient, registry: string) {
+  const list = async (): Promise<string[] | null> => {
     const render = absentToNull(await rpc.qrender(registry, ""));
     return render === null ? null : [...new Set([...render.matchAll(REGISTRY_KEY_RE)].map((m) => m[1]))];
   };
-
-  // Accept what people type: native ugnot is refused with a pointer, and a bare realm that
-  // registers exactly one token resolves to that token's registry key.
-  const resolveKey = async (token: string): Promise<string> => {
-    if (token === "ugnot" || token === "gnot")
-      throw new Error("ugnot is native GNOT, not a GRC20 token; use gno_get_balances for balances and gno_prices for price");
+  const resolve = async (token: string): Promise<string> => {
     if (token.slice(token.lastIndexOf("/") + 1).includes(".")) return token;
-    const keys = await registryKeys().catch(() => null);
+    const keys = await list().catch(() => null);
     if (keys === null || keys.includes(token)) return token;
     const matches = keys.filter((k) => k.startsWith(`${token}.`));
     if (matches.length === 1) return matches[0];
     if (matches.length > 1)
       throw new Error(`${token} registers several tokens (${matches.join(", ")}); pass one of those keys`);
     return token;
+  };
+  return { list, resolve };
+}
+
+export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: string, chainId = "gnoland-1"): void {
+  const readToken = async (key: string, expr: string): Promise<GnoScalar> =>
+    parseGnoScalar(absentToNull(await rpc.qeval(`${registry}.Get(${quote(key)}).${expr}`)));
+
+  const keys = tokenKeys(rpc, registry);
+  const registryKeys = keys.list;
+
+  // Accept what people type: native ugnot is refused with a pointer.
+  const resolveKey = async (token: string): Promise<string> => {
+    if (token === "ugnot" || token === "gnot")
+      throw new Error("ugnot is native GNOT, not a GRC20 token; use gno_get_balances for balances and gno_prices for price");
+    return keys.resolve(token);
   };
 
   server.registerTool(
