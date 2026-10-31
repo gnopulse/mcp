@@ -46,7 +46,10 @@ export interface Intent {
 }
 
 /** A denial carries a reason the agent can act on. */
-export type PolicyDecision = { allow: true } | { allow: false; reason: string };
+/** A refusal names the setting that would allow the intent, and the change, when one exists. */
+export type PolicyDecision =
+  | { allow: true }
+  | { allow: false; reason: string; setting?: string; change?: string };
 
 /** Checked for every intent at propose time and again at confirm time. */
 export interface PolicyEngine {

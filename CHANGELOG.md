@@ -5,6 +5,10 @@
 - Approval works in clients that cannot show MCP forms, such as Claude Code before its approval forms: `gno_confirm` opens a native approval window (macOS, Windows, Linux with zenity or kdialog) showing the action and its full cost. The window is tried before the client's form; `GNOPULSE_APPROVAL_DIALOG=off` skips it.
 - With no way to ask the person, `gno_agent_status` and the write tools say so up front, naming the client and version and how to update it, and no approval token is issued. Before, the agent got a preview and a token, then a generic refusal at `gno_confirm`.
 - The approval message leads with the action, the total cost and how to approve, since clients may show only its first lines.
+- A refused action (`policy_denied`) carries `how_to_allow`: the agent is told not to retry or work around it, but to ask the user, naming the setting and the change that would allow it and that the app must restart.
+- `gno_agent_status`, when ready, says what the agent may do (realms, functions, send cap, expiry) and whether it acts alone or the user approves each transaction.
+- Autonomous mode's start-up error names each missing limit and gives a working example, or points to approval mode.
+- The README opens execution with a short guide: the three modes, configs to copy, funding like a prepaid card, how to widen limits, and what limits do not cover.
 - With signing off, `gno_agent_status` names the local agent wallet instead of saying the server holds no keys, and says that only the server's settings, not a tool call, turn signing on. The hosted server still says it holds no wallet keys.
 
 ## 0.3.7 (2026-10-30)

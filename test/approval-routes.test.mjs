@@ -124,3 +124,22 @@ test("a dialog left open past the approval expiry counts as expired and is close
   assert.equal(await dialog.ask("x", 1000, new AbortController().signal), "timeout");
   assert.ok(Date.now() - started < 5000);
 });
+
+test("a refused action tells the agent to ask, and which setting the user changes", async () => {
+  const handlers = {};
+  registerExecutionTools({ registerTool(name, _c, fn) { handlers[name] = fn; }, server: { getClientCapabilities: () => ({}), getClientVersion: () => null } }, {
+    gnotx: {}, rpc: {}, signer: { requiresApproval: false }, approvals: {}, chainId: "gnoland-1",
+    policy: new ConfigurablePolicy({ defaultAllow: false, allowRealms: ["gno.land/r/gnoland/wugnot"], denyRealms: [], allowFuncs: ["Deposit"], denyFuncs: [] })
+  });
+  const r = body(await handlers.gno_call({ pkgpath: "gno.land/r/gnoswap/gns", func: "Approve", args: ["g1x", "1"] }));
+  assert.equal(r.status, "policy_denied");
+  assert.match(r.how_to_allow, /Do not retry it or look for another way\. Ask the user/);
+  assert.match(r.how_to_allow, /GNOPULSE_POLICY_ALLOW_REALMS in this GnoPulse server's settings \(add gno\.land\/r\/gnoswap\/gns\) and restart/);
+});
+
+test("the ready status says what the agent may do and how to ask for more", async () => {
+  const { handlers } = setup({ dialog: "decline" });
+  const next = body(await handlers.gno_agent_status({})).next_steps[0];
+  assert.match(next, /^Ready\. Allowed: any realm; any function\. The user approves each transaction \(system_dialog\)\./);
+  assert.match(next, /To do more, ask the user/);
+});

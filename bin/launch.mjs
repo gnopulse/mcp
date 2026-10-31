@@ -239,9 +239,14 @@ async function main() {
   }
   if (SIGNER_KIND === "microservice" || SIGNER_KIND === "tee") {
     const { loadPolicy } = await import(pathToFileURL(path.join(DIST, "signer/policy.js")).href);
-    if (!loadPolicy(env).boundedAutonomy)
+    const policy = loadPolicy(env);
+    if (!policy.boundedAutonomy)
       die(
-        "Autonomous signing requires explicit realm/function allowlists, native-send/fee/gas limits and a future expiry."
+        "Autonomous signing (GNOPULSE_SIGNER=microservice) acts without asking, so it needs limits. Missing: " +
+          `${policy.missingForAutonomy().join(", ")}. Example: GNOPULSE_POLICY_ALLOW_REALMS=gno.land/r/gnoland/wugnot ` +
+          "GNOPULSE_POLICY_ALLOW_FUNCS=Deposit,Withdraw GNOPULSE_POLICY_MAX_SEND_UGNOT=1000000 " +
+          "GNOPULSE_POLICY_MAX_FEE_UGNOT=1000000 GNOPULSE_POLICY_MAX_GAS=50000000 GNOPULSE_POLICY_EXPIRES_IN=86400. " +
+          "Or set GNOPULSE_SIGNER=user-approval to approve each transaction instead."
       );
   }
   signerAddr ||= await privateSignerAddress();

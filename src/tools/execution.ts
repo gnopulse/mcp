@@ -15,7 +15,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SignerIdentityError, type Gnotx, type GnotxEnvelope } from "../gnotx.js";
 import { isAbsent, type RpcClient } from "../rpc.js";
-import type { Intent, PolicyEngine, Signer } from "../signer/types.js";
+import type { Intent, PolicyDecision, PolicyEngine, Signer } from "../signer/types.js";
 import type { ApprovalStore } from "../signer/approvals.js";
 import { ConfigurablePolicy } from "../signer/policy.js";
 import { approvalMessage, previewLimits } from "../signer/approvalDisplay.js";
@@ -82,6 +82,25 @@ function enableHint(hosted: boolean, wallet?: string): string {
     : `Signing is off and no agent wallet is configured; set GNOPULSE_AGENT_ID to create one. ${enable}`;
 }
 
+/** What to tell the agent when the user's limits refuse an action: ask, never work around it. */
+function refusal(decision: PolicyDecision, extra: Record<string, unknown> = {}) {
+  if (decision.allow) throw new Error("refusal() needs a denied decision");
+  return {
+    status: "policy_denied",
+    reason: decision.reason,
+    ...(decision.setting
+      ? {
+          how_to_allow:
+            "This is outside what the user allowed this agent to do. Do not retry it or look for another way. " +
+            `Ask the user whether to allow it. If they agree, they (or you, if they ask) change ${decision.setting} ` +
+            `in this GnoPulse server's settings (${decision.change}) and restart the app. Agent actions within the ` +
+            "new limits then run under the same checks. Keep only what the user is willing to lose in the agent wallet."
+        }
+      : {}),
+    ...extra
+  };
+}
+
 export interface ExecutionDeps {
   gnotx: Gnotx;
   rpc: RpcClient;
@@ -121,6 +140,29 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
       ...(clientShowsForms() ? ["mcp_elicitation"] : []),
       ...(deps.approvalPublicKey ? ["signed_client_approval"] : [])
     ];
+  }
+
+  /** What the agent may do now, and how the user widens it. */
+  function readyHint(): string {
+    const p = policy instanceof ConfigurablePolicy ? policy.describe() : null;
+    const scope = p
+      ? [
+          p.allow_realms.length ? `realms ${p.allow_realms.join(", ")}` : "any realm",
+          p.allow_functions.length ? `functions ${p.allow_functions.join(", ")}` : "any function",
+          p.max_send_ugnot ? `up to ${p.max_send_ugnot} ugnot sent per transaction` : null,
+          p.expires_at ? `until ${new Date(p.expires_at * 1000).toISOString()}` : null
+        ]
+          .filter(Boolean)
+          .join("; ")
+      : "the configured policy";
+    const how = signer?.requiresApproval
+      ? `The user approves each transaction (${approvalMethods().join(" or ")}).`
+      : "Actions run without asking the user, within these limits.";
+    return (
+      `Ready. Allowed: ${scope}. ${how} Every action is simulated and checked first. Use gno_simulate to ` +
+      "preview and gno_call, gno_swap or gno_approve to act. To do more, ask the user; they widen the " +
+      "GNOPULSE_POLICY_* settings of this server and restart the app."
+    );
   }
 
   /** Why nobody can approve here, naming the client and what to do about it. */
@@ -189,9 +231,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         } else if (signer.requiresApproval && approvalMethods().length === 0) {
           nextStep = approvalUnavailable();
         } else {
-          nextStep =
-            "Ready. Every action is simulated and policy-checked before signing. Use gno_simulate to " +
-            "preview and gno_call, gno_swap, or gno_approve to act within the policy above.";
+          nextStep = readyHint();
         }
 
         return ok({
@@ -272,7 +312,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
     const call = callForIntent(intent);
     Object.assign(intent, call);
     const initialDecision = await policy.check(intent);
-    if (!initialDecision.allow) return ok({ status: "policy_denied", reason: initialDecision.reason });
+    if (!initialDecision.allow) return ok(refusal(initialDecision, { intent: intent.summary }));
     // An unfunded address has no on-chain account, so simulation would fail with an opaque
     // error. Report the address and faucet instead.
     if (signer) {
@@ -321,12 +361,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
     intent.executionLimits = limits;
     const decision = await policy.check(intent);
     if (!decision.allow) {
-      return ok({
-        status: "policy_denied",
-        reason: decision.reason,
-        intent: intent.summary,
-        simulate: preview
-      });
+      return ok(refusal(decision, { intent: intent.summary, simulate: preview }));
     }
     if (!signer) {
       return ok({
@@ -554,11 +589,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         // Policy may have changed since the action was proposed.
         const decision = await policy.check(pending.intent);
         if (!decision.allow) {
-          return ok({
-            status: "policy_denied",
-            reason: decision.reason,
-            intent: pending.intent.summary
-          });
+          return ok(refusal(decision, { intent: pending.intent.summary }));
         }
         const receipt = extra._meta?.[CLIENT_APPROVAL_META];
         const identity = await agentAccount();
@@ -656,7 +687,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
             note: "Approval expired; propose again."
           });
         const current = await policy.check(pending.intent);
-        if (!current.allow) return ok({ status: "policy_denied", reason: current.reason });
+        if (!current.allow) return ok(refusal(current, { intent: pending.intent.summary }));
         if (extra.signal.aborted) return ok({ status: "approval_cancelled" });
         if (Date.now() >= pending.expiresAt) return ok({ status: "approval_expired" });
         const result = await signer.execute(pending.intent);

@@ -228,3 +228,24 @@ test("autonomous grant needs all bounds and enforces gas, fees and expiry", () =
   assert.equal(p.check(callIntent()).allow, false);
   assert.throws(() => loadPolicy({ GNOPULSE_POLICY_MAX_GAS: "9007199254740992" }), PolicyConfigError);
 });
+
+test("each refusal names the setting and change that would allow it", () => {
+  const p = new ConfigurablePolicy({
+    defaultAllow: false, allowRealms: ["gno.land/r/gnoland/wugnot"], denyRealms: [], allowFuncs: ["Deposit"], denyFuncs: [],
+    maxSendUgnot: 1000n
+  });
+  const realm = p.check({ kind: "call", pkgpath: "gno.land/r/gnoswap/gns", func: "Deposit", summary: "" });
+  assert.equal(realm.setting, "GNOPULSE_POLICY_ALLOW_REALMS");
+  assert.equal(realm.change, "add gno.land/r/gnoswap/gns");
+  const func = p.check({ kind: "call", pkgpath: "gno.land/r/gnoland/wugnot", func: "Withdraw", summary: "" });
+  assert.equal(func.setting, "GNOPULSE_POLICY_ALLOW_FUNCS");
+  const send = p.check({ kind: "call", pkgpath: "gno.land/r/gnoland/wugnot", func: "Deposit", send: "5000ugnot", summary: "" });
+  assert.deepEqual([send.setting, send.change], ["GNOPULSE_POLICY_MAX_SEND_UGNOT", "raise it to at least 5000"]);
+});
+
+test("missing autonomy settings are listed by name", () => {
+  const p = new ConfigurablePolicy({ defaultAllow: false, allowRealms: ["r"], denyRealms: [], allowFuncs: [], denyFuncs: [], maxSendUgnot: 1n });
+  assert.deepEqual(p.missingForAutonomy(), [
+    "GNOPULSE_POLICY_ALLOW_FUNCS", "GNOPULSE_POLICY_MAX_FEE_UGNOT", "GNOPULSE_POLICY_MAX_GAS", "GNOPULSE_POLICY_EXPIRES_IN"
+  ]);
+});

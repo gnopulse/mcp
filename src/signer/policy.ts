@@ -42,7 +42,8 @@ export function parseUgnot(send: string | undefined): bigint | null {
   return m ? BigInt(m[1]) : null;
 }
 
-const deny = (reason: string): PolicyDecision => ({ allow: false, reason });
+const deny = (reason: string, setting?: string, change?: string): PolicyDecision =>
+  setting ? { allow: false, reason, setting, change } : { allow: false, reason };
 
 export class ConfigurablePolicy implements PolicyEngine {
   /** `now` returns unix seconds; injectable for tests. */
@@ -65,6 +66,19 @@ export class ConfigurablePolicy implements PolicyEngine {
   get restrictive(): boolean {
     const c = this.cfg;
     return c.allowRealms.length > 0 || c.allowFuncs.length > 0 || !c.defaultAllow;
+  }
+
+  /** Settings an autonomous signer still needs, by environment variable name. */
+  missingForAutonomy(): string[] {
+    const c = this.cfg;
+    return [
+      ...(c.allowRealms.length ? [] : ["GNOPULSE_POLICY_ALLOW_REALMS"]),
+      ...(c.allowFuncs.length ? [] : ["GNOPULSE_POLICY_ALLOW_FUNCS"]),
+      ...(c.maxSendUgnot !== undefined ? [] : ["GNOPULSE_POLICY_MAX_SEND_UGNOT"]),
+      ...(c.maxFeeUgnot !== undefined ? [] : ["GNOPULSE_POLICY_MAX_FEE_UGNOT"]),
+      ...(c.maxGasWanted !== undefined ? [] : ["GNOPULSE_POLICY_MAX_GAS"]),
+      ...(c.expiresAt !== undefined && c.expiresAt > this.now() ? [] : ["GNOPULSE_POLICY_EXPIRES_IN"])
+    ];
   }
 
   get boundedAutonomy(): boolean {
@@ -101,44 +115,44 @@ export class ConfigurablePolicy implements PolicyEngine {
     const { pkgpath: realm, func } = targetForIntent(intent);
 
     if (c.expiresAt !== undefined && this.now() >= c.expiresAt) {
-      return deny("policy expired (session grant ended)");
+      return deny("policy expired (session grant ended)", "GNOPULSE_POLICY_EXPIRES_IN", "set a new duration in seconds, or GNOPULSE_POLICY_EXPIRES_AT to a future unix time");
     }
     if (c.feesOnly) {
       const amount = parseUgnot(intent.send);
       if (amount === null || amount > 0n) {
-        return deny(`fees-only policy: value transfers not allowed (send="${intent.send ?? ""}")`);
+        return deny(`fees-only policy: value transfers not allowed (send="${intent.send ?? ""}")`, "GNOPULSE_POLICY_FEES_ONLY", "remove it to allow sending coins");
       }
     }
 
-    if (realm && c.denyRealms.includes(realm)) return deny(`realm ${realm} is denylisted`);
-    if (func && c.denyFuncs.includes(func)) return deny(`function ${func} is denylisted`);
+    if (realm && c.denyRealms.includes(realm)) return deny(`realm ${realm} is denylisted`, "GNOPULSE_POLICY_DENY_REALMS", `remove ${realm}`);
+    if (func && c.denyFuncs.includes(func)) return deny(`function ${func} is denylisted`, "GNOPULSE_POLICY_DENY_FUNCS", `remove ${func}`);
     if (c.allowRealms.length && (!realm || !c.allowRealms.includes(realm))) {
-      return deny(`realm ${realm ?? "?"} not in the allowlist`);
+      return deny(`realm ${realm ?? "?"} not in the allowlist`, "GNOPULSE_POLICY_ALLOW_REALMS", `add ${realm ?? "the realm"}`);
     }
     if (c.allowFuncs.length && (!func || !c.allowFuncs.includes(func))) {
-      return deny(`function ${func ?? "?"} not in the allowlist`);
+      return deny(`function ${func ?? "?"} not in the allowlist`, "GNOPULSE_POLICY_ALLOW_FUNCS", `add ${func ?? "the function"}`);
     }
 
     if (c.maxSendUgnot !== undefined) {
       const amount = parseUgnot(intent.send);
       if (amount === null) return deny(`cannot verify send "${intent.send}" against the ugnot cap`);
       if (amount > c.maxSendUgnot) {
-        return deny(`send ${amount}ugnot exceeds per-tx cap ${c.maxSendUgnot}ugnot`);
+        return deny(`send ${amount}ugnot exceeds per-tx cap ${c.maxSendUgnot}ugnot`, "GNOPULSE_POLICY_MAX_SEND_UGNOT", `raise it to at least ${amount}`);
       }
     }
 
     if (intent.executionLimits) {
       if (c.maxGasWanted !== undefined && intent.executionLimits.gasWanted > c.maxGasWanted)
-        return deny("Estimated gas exceeds the configured transaction limit.");
+        return deny("Estimated gas exceeds the configured transaction limit.", "GNOPULSE_POLICY_MAX_GAS", `raise it to at least ${intent.executionLimits.gasWanted}`);
       if (c.maxFeeUgnot !== undefined && BigInt(intent.executionLimits.feeUgnot) > c.maxFeeUgnot)
-        return deny("Estimated gas and storage cost exceeds the configured transaction limit.");
+        return deny("Estimated gas and storage cost exceeds the configured transaction limit.", "GNOPULSE_POLICY_MAX_FEE_UGNOT", `raise it to at least ${intent.executionLimits.feeUgnot}`);
     }
 
     // An intent that passed a configured allowlist is allowed even under default-deny;
     // the default applies only when no allowlist is configured.
     const hasAllowlist = c.allowRealms.length > 0 || c.allowFuncs.length > 0;
     if (hasAllowlist || c.defaultAllow) return { allow: true };
-    return deny("default-deny policy and no allow rule configured");
+    return deny("default-deny policy and no allow rule configured", "GNOPULSE_POLICY_ALLOW_REALMS", `add ${realm ?? "the realm"} (and its function to GNOPULSE_POLICY_ALLOW_FUNCS)`);
   }
 }
 

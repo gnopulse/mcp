@@ -28,7 +28,51 @@ No install. Get an API key at [gnopulse.xyz](https://gnopulse.xyz), then add:
 
 The hosted server holds no wallet keys. HTTP never registers execution or confirmation tools. Simulation is advertised only when an explicitly configured healthy backend declares unsigned simulation support. A listed tool can still become unavailable during a later outage; failures never fall back to signing.
 
-### Local: separate agent identity from execution permission
+### Let your agent act on-chain
+
+The agent gets its own small wallet on your computer. What it may do is chosen in the server's settings when your app starts it; no tool call can change that.
+
+| Mode | `GNOPULSE_SIGNER` | What happens |
+|---|---|---|
+| Data only (default) | `none` | Reads and simulations. Nothing is signed. |
+| Approve each transaction | `user-approval` | The agent proposes; you approve each one in a system window on your computer or in your app's approval form. |
+| Autonomous | `microservice` | The agent acts without asking, inside limits you set: which realms and functions, how much per transaction, and until when. |
+
+1. Add one of these to your app's MCP settings (Claude Code, Codex, Cursor, VS Code, Claude Desktop):
+
+   ```json
+   { "mcpServers": { "gnopulse": {
+     "command": "npx", "args": ["-y", "@gnopulse/mcp"],
+     "env": {
+       "GNOPULSE_API_KEY": "YOUR_KEY",
+       "GNOPULSE_AGENT_ID": "my-agent",
+       "GNOPULSE_SIGNER": "user-approval" } } } }
+   ```
+
+   For autonomous mode, use `"GNOPULSE_SIGNER": "microservice"` and add limits, for example:
+
+   ```json
+       "GNOPULSE_POLICY_ALLOW_REALMS": "gno.land/r/gnoland/wugnot,gno.land/r/gnoswap/router",
+       "GNOPULSE_POLICY_ALLOW_FUNCS": "Deposit,Withdraw,Approve,ExactInSwapRoute",
+       "GNOPULSE_POLICY_MAX_SEND_UGNOT": "1000000",
+       "GNOPULSE_POLICY_MAX_FEE_UGNOT": "3000000",
+       "GNOPULSE_POLICY_MAX_GAS": "300000000",
+       "GNOPULSE_POLICY_EXPIRES_IN": "86400"
+   ```
+
+   Autonomous mode will not start without all six; the error names any that are missing.
+2. Restart the app and ask the agent for its wallet. `gno_agent_status` reports the address, the balance, what it may do, and how you approve.
+3. Send it GNOT. Treat it like a prepaid card: fund only what you are willing to lose. A first GnoSwap swap also locks about 2 GNOT as a storage deposit.
+4. Ask it to act. If something is outside your limits, the agent is told not to work around it but to ask you, naming the setting that would allow it. To allow more, change that setting (or ask the agent to) and restart the app.
+
+Things to know:
+
+- Limits apply to the GnoPulse tools. An agent with unrestricted shell access on your computer could read the wallet key in `~/.gnopulse-agent`, so keep your app's own approval for file edits and shell commands on when an agent wallet is funded.
+- Limits are per transaction, not daily budgets, and the send cap covers GNOT only, not GRC20 tokens. Allowing `Approve` or a token transfer function grants what those calls permit.
+- Web chat apps (claude.ai, ChatGPT) can only use the hosted server, which reads data and cannot sign. Claude's chat apps may decline to make transactions even with signing on; Claude Code does not.
+- OpenAI models see at most 128 tools, so run one GnoPulse server at a time in ChatGPT or Codex.
+
+### Local setup details
 
 Use matching MCP and native binary versions; do not mix them with an older signing backend.
 
