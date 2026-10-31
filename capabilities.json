@@ -1,5 +1,5 @@
 {
-  "status": "0.3.7: 0.3.6 with working mainnet execution, chain-priced fees and swap token resolution",
+  "status": "0.3.8: 0.3.7 with a system approval window, early approval guidance and cost-first approval text",
   "tools": [
     {
       "name": "gno_agent_status",

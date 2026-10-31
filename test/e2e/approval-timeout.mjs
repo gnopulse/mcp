@@ -8,6 +8,9 @@ import { loadConfig } from "../../dist/config.js";
 import { ApprovalStore } from "../../dist/signer/approvals.js";
 import { ConfigurablePolicy } from "../../dist/signer/policy.js";
 import { check, run } from "./lib.mjs";
+
+// Approval runs through the test client's form, never a real window on this machine.
+process.env.GNOPULSE_APPROVAL_DIALOG = "off";
 await run(async () => {
   for (const mode of ["expiry", "cancel", "policy"]) {
     const cancel = mode !== "expiry";

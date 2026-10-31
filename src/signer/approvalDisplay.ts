@@ -46,12 +46,17 @@ export function formatGnot(ugnot: string | bigint): string {
 }
 
 /** Deterministic descriptions of supported intents, never model-authored contract claims. */
+/**
+ * Clients may show only the first few lines, so the action, the total cost and how to approve
+ * come first. `how` words the instruction for an MCP form or a system dialog.
+ */
 export function approvalMessage(
   intent: Intent,
   preview: GnotxEnvelope,
   agent: string,
   chain: string,
-  wallet: string
+  wallet: string,
+  how: "form" | "dialog" = "form"
 ): string {
   const limits = previewLimits(preview);
   if (!limits) throw new Error("Complete cost information is required for approval.");
@@ -73,12 +78,22 @@ export function approvalMessage(
   ) {
     action = `Deposit ${money(send)} into wrapped GNOT (wugnot).`;
   } else {
-    action = `Call ${JSON.stringify(call.func)} on realm ${JSON.stringify(call.pkgpath)}.\nThis contract's effects are not decoded. Review the arguments below; the call may change contract state or move tokens.`;
+    action = `Call ${JSON.stringify(call.func)} on realm ${JSON.stringify(call.pkgpath)}. This contract's effects are not decoded. Review the arguments below; the call may change contract state or move tokens.`;
   }
   const total = BigInt(limits.feeUgnot);
+  const cost =
+    send === null
+      ? `Costs up to ${money(total)} in gas and storage, plus the coins sent: ${JSON.stringify(call.send || "")}.`
+      : `Costs up to ${money(total + send)} in total: ${money(send)} sent, ${money(e.estimated_fee_ugnot)} gas, ` +
+        `up to ${money(limits.storageDepositUgnot)} storage deposit.`;
+  const instruction =
+    how === "form"
+      ? "To send: tick ‘Yes, sign and send this transaction’ (Space in a terminal), then Accept. Accept alone sends nothing."
+      : "To send: click ‘Approve and send’. Cancel sends nothing.";
   return [
-    "Review transaction",
     action,
+    cost,
+    instruction,
     `Network: ${JSON.stringify(chain)}${chain === "onyx-1" ? " (Onyx testnet)" : ""}`,
     `Agent: ${JSON.stringify(agent)}`,
     `From wallet: ${wallet}`,
@@ -89,7 +104,6 @@ export function approvalMessage(
     `Maximum native debit${send === null ? " excluding the sent coins above" : " including the amount sent"}: ${money(total + (send ?? 0n))}`,
     `Estimated storage refund: ${money(e.estimated_storage_refund_ugnot)}. Refunds do not reduce these limits.`,
     "Simulation passed without signing. State may change; a failed submitted transaction can still consume gas. Contract effects and token transfers are not bounded by the gas/storage ceiling.",
-    "To send: check ‘Yes, sign and send this transaction’, then choose Accept. Leaving it unchecked sends nothing.",
     "Technical details:",
     `Realm: ${JSON.stringify(call.pkgpath)}`,
     `Function: ${JSON.stringify(call.func)}`,

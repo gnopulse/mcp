@@ -17,7 +17,8 @@ function tools(authAccount) {
     signer: { requiresApproval: true },
     approvals: {},
     chainId: "gnoland-1",
-    agentAddress: ADDRESS
+    agentAddress: ADDRESS,
+    approvalDialog: { kind: "test", ask: async () => "decline" }
   });
   return { handlers, simulated: () => simulated };
 }

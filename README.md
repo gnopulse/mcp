@@ -30,7 +30,7 @@ The hosted server holds no wallet keys. HTTP never registers execution or confir
 
 ### Local: separate agent identity from execution permission
 
-This source includes an unreleased wallet-permission repair. Use matching MCP and native binary versions; do not mix it with an older signing backend.
+Use matching MCP and native binary versions; do not mix them with an older signing backend.
 
 With no agent ID, the default launcher runs data tools without creating a wallet. To create a persistent wallet for one agent, configure:
 
@@ -54,7 +54,7 @@ Give every logical agent a distinct lowercase `GNOPULSE_AGENT_ID`. Its keybase i
 
 The launcher starts its own authenticated loopback service with execution disabled. A named agent can inspect its address and simulate ordinary realm calls using public key metadata, without signing. Without an ID and with signing disabled, no keybase or service is created. Funding a wallet does not enable execution.
 
-The owner can explicitly select `GNOPULSE_SIGNER=user-approval`. Proposals return an unsigned preview and single-use token. `gno_confirm` accepts authenticated host approval or requests consent through MCP elicitation. The client chooses the presentation, such as an in-chat confirmation or approval card. A token or model-supplied tool argument is insufficient. Unsupported clients, cancellation, refusal and expiry fail closed. Elicitation waits only until the proposal expires and follows tool-call cancellation; an expired, cancelled or failed approval cannot be revived by a late response. Clients must present these requests to the human, not automatically accept them.
+The owner can explicitly select `GNOPULSE_SIGNER=user-approval`. Proposals return an unsigned preview and single-use token. `gno_confirm` asks the person in this order: a native approval window on this computer (macOS, Windows, or Linux with zenity or kdialog), then the client's MCP elicitation form, or an authenticated host approval when one is attached. The window works in any client, including ones too old to show forms; set `GNOPULSE_APPROVAL_DIALOG=off` to skip it. With no way to ask (no desktop, as over SSH, and a client without forms), `gno_agent_status` and the proposal itself say so, naming the client and how to update it, and no token is issued. The client chooses the presentation, such as an in-chat confirmation or approval card. A token or model-supplied tool argument is insufficient. Cancellation, refusal and expiry fail closed. An agent with unrestricted shell access and macOS Accessibility permission could in principle drive the approval window, so do not grant those to an agent you do not trust. Elicitation waits only until the proposal expires and follows tool-call cancellation; an expired, cancelled or failed approval cannot be revived by a late response. Clients must present these requests to the human, not automatically accept them.
 
 The launcher uses the bundled native binary, isolates service ports, and stops its own child service on exit. An occupied configured port is refused. Legacy `~/.gnopulse-agent` keys are not moved, deleted or silently reused: back them up and explicitly plan migration before funding a new agent address.
 

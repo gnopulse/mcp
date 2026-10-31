@@ -18,6 +18,7 @@ import { registerDatasetTools } from "./tools/datasets.js";
 import { registerChainTools } from "./tools/chain.js";
 import { registerTokenTools, tokenKeys } from "./tools/tokens.js";
 import { registerExecutionTools } from "./tools/execution.js";
+import { systemDialog } from "./signer/systemDialog.js";
 
 export interface SharedDeps {
   rpc: RpcClient;
@@ -52,6 +53,7 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
     agentAddress: cfg.agentAddress,
     agentId: cfg.agentId,
     approvalPublicKey: cfg.approvalPublicKey,
+    approvalDialog: cfg.transport === "http" ? null : systemDialog(),
     readOnly: cfg.transport === "http",
     simulationAvailable: deps.simulationAvailable
   });

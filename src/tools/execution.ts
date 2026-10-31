@@ -19,6 +19,7 @@ import type { Intent, PolicyEngine, Signer } from "../signer/types.js";
 import type { ApprovalStore } from "../signer/approvals.js";
 import { ConfigurablePolicy } from "../signer/policy.js";
 import { approvalMessage, previewLimits } from "../signer/approvalDisplay.js";
+import type { SystemDialog } from "../signer/systemDialog.js";
 import { callForIntent } from "../signer/call.js";
 import {
   absentToNull,
@@ -46,6 +47,16 @@ function fundingHint(chainId: string): string {
 const EXEC_GUIDE = "https://gnopulse.xyz/quickstart";
 // Measured on gnoland-1: a call costs about 0.02 to 0.3 GNOT in gas plus any storage it adds;
 // a wallet's first GnoSwap swap also locks about 1.9 GNOT of storage deposit.
+/** How to update the clients people commonly run this server in. */
+function updateHint(client?: string): string {
+  const name = (client || "").toLowerCase();
+  if (name.includes("claude-code") || name === "claude code")
+    return "Update Claude Code (npm i -g @anthropic-ai/claude-code@latest; approval forms work in recent versions).";
+  if (name.includes("codex")) return "Update Codex (npm i -g @openai/codex@latest).";
+  if (name.includes("cursor")) return "Update Cursor to its latest version.";
+  return "Update the app to a version that supports MCP elicitation forms, or use one that does.";
+}
+
 const GAS_ESTIMATE = "under 0.5 GNOT, and a first GnoSwap swap locks about 2 GNOT more as a storage deposit";
 const FUNDING_ESTIMATE = "3 GNOT covers a first swap";
 const CLA_REALM = "gno.land/r/sys/cla";
@@ -70,6 +81,8 @@ export interface ExecutionDeps {
   agentAddress?: string;
   agentId?: string;
   approvalPublicKey?: string;
+  /** Native approval dialog on this machine; null when there is no desktop to show it on. */
+  approvalDialog?: SystemDialog | null;
   /** HTTP exposes reads and simulation, never execution or confirmation tools. */
   readOnly?: boolean;
   simulationAvailable?: boolean;
@@ -77,6 +90,33 @@ export interface ExecutionDeps {
 
 export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): void {
   const { gnotx, rpc, policy, signer, approvals } = deps;
+
+  /** True when the connected client can show an MCP approval form. */
+  function clientShowsForms(): boolean {
+    const elicitation = server.server?.getClientCapabilities?.()?.elicitation;
+    return !!elicitation && ("form" in elicitation || Object.keys(elicitation).length === 0);
+  }
+
+  /** How a person can approve here, in the order gno_confirm tries them. */
+  function approvalMethods(): string[] {
+    if (!signer?.requiresApproval) return [];
+    return [
+      ...(deps.approvalDialog ? ["system_dialog"] : []),
+      ...(clientShowsForms() ? ["mcp_elicitation"] : []),
+      ...(deps.approvalPublicKey ? ["signed_client_approval"] : [])
+    ];
+  }
+
+  /** Why nobody can approve here, naming the client and what to do about it. */
+  function approvalUnavailable(): string {
+    const client = server.server?.getClientVersion?.();
+    const name = client ? `${client.name} ${client.version}` : "This client";
+    return (
+      `${name} cannot show transaction approval forms, and there is no desktop here for an approval window. ` +
+      `${updateHint(client?.name)} Or run the agent on a desktop, or set GNOPULSE_SIGNER=microservice with ` +
+      "allowlists, limits and an expiry to act without per-transaction approval. Nothing was signed."
+    );
+  }
 
   /**
    * The signing service's address and chain, plus that address's on-chain account if it has one.
@@ -130,6 +170,8 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           nextStep =
             `Wallet ${address ?? "?"} has no GNOT for gas. Ask the user to fund it${fundingHint(chainId)}; ` +
             `each action typically costs ${GAS_ESTIMATE}.`;
+        } else if (signer.requiresApproval && approvalMethods().length === 0) {
+          nextStep = approvalUnavailable();
         } else {
           nextStep =
             "Ready. Every action is simulated and policy-checked before signing. Use gno_simulate to " +
@@ -145,9 +187,7 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           funded,
           execution_enabled: signer !== null,
           signing_mode: !signer ? "disabled" : signer.requiresApproval ? "interactive" : "autonomous",
-          approval_methods: signer?.requiresApproval
-            ? ["mcp_elicitation", ...(deps.approvalPublicKey ? ["signed_client_approval"] : [])]
-            : [],
+          approval_methods: approvalMethods(),
           agent_id: process.env.GNOPULSE_AGENT_ID || null,
           simulation_available: deps.simulationAvailable === true,
           faucet: faucetFor(chainId),
@@ -280,6 +320,10 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
         simulate: preview
       });
     }
+    // Refuse at the proposal, before issuing a token nobody here could approve. Identity, funding,
+    // backend and policy failures above take precedence because they are more specific.
+    if (signer.requiresApproval && approvalMethods().length === 0)
+      return ok({ status: "approval_unavailable", intent: intent.summary, reason: approvalUnavailable() });
     if (signer.requiresApproval) {
       const pending = approvals.create(intent, preview);
       return ok({
@@ -474,8 +518,9 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
     {
       title: "Confirm & broadcast",
       description:
-        "Request client-side human consent for a proposed action. A proposal token is not approval. " +
-        "Requires MCP elicitation or a signed approval from a configured trusted client; unsupported clients never execute.",
+        "Ask the person to approve a proposed action. A proposal token is not approval. The person approves in " +
+        "a system approval window on this computer, an MCP approval form, or a signed approval from a configured " +
+        "trusted client; with none of these, nothing executes.",
       inputSchema: {
         token: z.string().describe("approval_token returned by a propose call")
       }
@@ -515,15 +560,30 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
               status: "approval_denied",
               reason: "Client authorization is invalid, expired, or does not match this transaction."
             });
-        } else {
-          const elicitation = server.server.getClientCapabilities()?.elicitation;
-          if (!elicitation || (!("form" in elicitation) && Object.keys(elicitation).length !== 0)) {
+        } else if (deps.approvalDialog) {
+          const message = approvalMessage(
+            pending.intent,
+            pending.preview as GnotxEnvelope,
+            deps.agentId || "unknown",
+            identity.chainId,
+            identity.address || "unknown",
+            "dialog"
+          );
+          const answer = await deps.approvalDialog.ask(
+            message,
+            Math.max(1, pending.expiresAt - Date.now()),
+            extra.signal
+          );
+          if (answer !== "approve")
             return ok({
-              status: "approval_unavailable",
+              status: answer === "timeout" ? "approval_expired" : answer === "error" ? "approval_failed" : "approval_declined",
               reason:
-                "This client cannot collect independent human consent. Use MCP elicitation or a configured trusted client authorization adapter."
+                answer === "error"
+                  ? "The approval window could not be shown. Nothing was signed or broadcast."
+                  : "Transaction not approved in the approval window. Nothing was signed or broadcast."
             });
-          }
+        } else {
+          if (!clientShowsForms()) return ok({ status: "approval_unavailable", reason: approvalUnavailable() });
           let consent;
           try {
             consent = await server.server.elicitInput(

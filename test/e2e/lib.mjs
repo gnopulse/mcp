@@ -45,6 +45,8 @@ export function serverEnv(overrides = {}) {
     GNOPULSE_API_BASE: OFFLINE,
     GNOPULSE_AGENT_ID: "e2e-agent",
     GNOPULSE_AGENT_ADDRESS: "g1test",
+    // A real approval window would wait for a person; tests drive approval through the client.
+    GNOPULSE_APPROVAL_DIALOG: "off",
     ...overrides
   };
 }

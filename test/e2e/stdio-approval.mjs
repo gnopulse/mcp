@@ -156,9 +156,10 @@ await run(async () => {
           pkgpath: "gno.land/r/demo/ok",
           func: "Ping"
         });
-        const reply = await other.callTool("gno_confirm", {
-          token: proposal.approval_token
-        });
+        // A client that cannot show forms is refused at the proposal, with nothing to confirm.
+        const reply = proposal.approval_token
+          ? await other.callTool("gno_confirm", { token: proposal.approval_token })
+          : proposal;
         check(
           `${label} cannot sign or broadcast`,
           ["approval_unavailable", "approval_declined"].includes(reply.status) && executeHits === 1,
