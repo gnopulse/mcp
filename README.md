@@ -68,7 +68,7 @@ To set it up by hand instead:
        "GNOPULSE_POLICY_EXPIRES_IN": "86400"
    ```
 
-   Autonomous mode will not start without all six; the error names any that are missing.
+   Autonomous mode will not start without all six; the error names any that are missing. `GNOPULSE_POLICY_EXPIRES_IN` counts from each start of the server, so a restart renews it; use `GNOPULSE_POLICY_EXPIRES_AT` (unix seconds) for a fixed end, as `setup` does.
 2. Restart the app and ask the agent for its wallet. `gno_agent_status` reports the address, the balance, what it may do, and how you approve.
 3. Send it GNOT. Treat it like a prepaid card: fund only what you are willing to lose. A first GnoSwap swap also locks about 2 GNOT as a storage deposit.
 4. Ask it to act. If something is outside your limits, the agent is told not to work around it but to ask you, naming the setting that would allow it. To allow more, change that setting (or ask the agent to) and restart the app.
