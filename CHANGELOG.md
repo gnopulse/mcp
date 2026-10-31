@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.8 (held, not released)
+## 0.3.8 (2026-10-30)
 
 - Approval works in clients that cannot show MCP forms, such as Claude Code before its approval forms: `gno_confirm` opens a native approval window (macOS, Windows, Linux with zenity or kdialog) showing the action and its full cost. The window is tried before the client's form; `GNOPULSE_APPROVAL_DIALOG=off` skips it.
 - With no way to ask the person, `gno_agent_status` and the write tools say so up front, naming the client and version and how to update it, and no approval token is issued. Before, the agent got a preview and a token, then a generic refusal at `gno_confirm`.
