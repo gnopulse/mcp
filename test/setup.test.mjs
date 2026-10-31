@@ -88,3 +88,8 @@ test("each app's settings file is where the app reads it", () => {
   assert.equal(mac.vscode.file, "/Users/u/Library/Application Support/Code/User/mcp.json");
   assert.equal(appTargets("linux", "/home/u").cursor.file, "/home/u/.cursor/mcp.json");
 });
+
+test("a local test package runs through npx --package and its bin", () => {
+  assert.deepEqual(serverEntry({}, "npx", "0.3.8", "/tmp/gnopulse-mcp-0.3.8.tgz").args, ["-y", "--package", "/tmp/gnopulse-mcp-0.3.8.tgz", "gnopulse-mcp"]);
+  assert.deepEqual(serverEntry({}, "npx", "0.3.8").args, ["-y", "@gnopulse/mcp@0.3.8"]);
+});

@@ -114,8 +114,11 @@ async function main() {
       : await ask("\nGnoPulse API key for data tools (from gnopulse.xyz; Enter to skip)", "");
 
   const env = buildEnv(answers);
+  // Testing an unreleased build: GNOPULSE_SETUP_PACKAGE names a local package (such as a tarball)
+  // and GNOTX_BIN the signer built with it.
+  if (process.env.GNOPULSE_SETUP_PACKAGE && process.env.GNOTX_BIN) env.GNOTX_BIN = process.env.GNOTX_BIN;
   const npx = path.join(path.dirname(process.execPath), process.platform === "win32" ? "npx.cmd" : "npx");
-  const entry = serverEntry(env, fs.existsSync(npx) ? npx : "npx", VERSION);
+  const entry = serverEntry(env, fs.existsSync(npx) ? npx : "npx", VERSION, process.env.GNOPULSE_SETUP_PACKAGE || undefined);
   const shown = { ...entry, env: { ...env, ...(env.GNOPULSE_API_KEY ? { GNOPULSE_API_KEY: "(your key)" } : {}) } };
 
   let name = "gnopulse";

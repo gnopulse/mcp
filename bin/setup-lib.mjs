@@ -75,9 +75,11 @@ export function buildEnv(a, nowSeconds = Math.floor(Date.now() / 1000)) {
   return env;
 }
 
-/** A server entry that GUI apps can start: absolute npx, pinned package version. */
-export function serverEntry(env, npx, version) {
-  return { command: npx, args: ["-y", `@gnopulse/mcp@${version}`], env };
+/** A server entry that GUI apps can start: absolute npx and a pinned package, by default this release. */
+export function serverEntry(env, npx, version, spec = `@gnopulse/mcp@${version}`) {
+  // npx runs a registry package by name, but a local package only through --package and its bin.
+  const local = /^[./]/.test(spec) || spec.endsWith(".tgz");
+  return { command: npx, args: local ? ["-y", "--package", spec, "gnopulse-mcp"] : ["-y", spec], env };
 }
 
 /** Where each app keeps its MCP servers, and in which shape. */
