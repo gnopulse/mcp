@@ -61,11 +61,26 @@ const GAS_ESTIMATE = "under 0.5 GNOT, and a first GnoSwap swap locks about 2 GNO
 const FUNDING_ESTIMATE = "3 GNOT covers a first swap";
 const CLA_REALM = "gno.land/r/sys/cla";
 
-const ENABLE_HINT =
-  "Execution is disabled: this server is read/simulate-only and holds no keys. To enable on-chain " +
-  "execution, the user runs the GnoPulse MCP locally with GNOPULSE_SIGNER=user-approval and a local " +
-  `gnotx signing service (see ${EXEC_GUIDE}); the write tools (gno_call, gno_swap, gno_approve, ` +
-  "gno_deploy, gno_confirm) are listed only then. The key stays on the user's machine.";
+const WRITE_TOOLS = "gno_call, gno_swap, gno_approve, gno_deploy, gno_confirm";
+
+/**
+ * Why execution is off and how the user turns it on. Signing is chosen when the server starts, so
+ * no tool call can enable it; a local agent wallet may still exist with signing off.
+ */
+function enableHint(hosted: boolean, wallet?: string): string {
+  if (hosted)
+    return (
+      "Execution is disabled: this hosted server is read/simulate-only and holds no wallet keys. To act on-chain, " +
+      `the user runs the GnoPulse MCP locally with GNOPULSE_AGENT_ID and GNOPULSE_SIGNER=user-approval (see ${EXEC_GUIDE}).`
+    );
+  const enable =
+    "To act on-chain, the user sets GNOPULSE_SIGNER=user-approval in this server's settings (or asks the agent to " +
+    `edit them) and restarts it; the write tools (${WRITE_TOOLS}) are listed only then. No tool call can turn ` +
+    `signing on. See ${EXEC_GUIDE}.`;
+  return wallet
+    ? `Signing is off. This computer holds the agent wallet ${wallet}, but this server will not sign with it. ${enable}`
+    : `Signing is off and no agent wallet is configured; set GNOPULSE_AGENT_ID to create one. ${enable}`;
+}
 
 export interface ExecutionDeps {
   gnotx: Gnotx;
@@ -90,6 +105,7 @@ export interface ExecutionDeps {
 
 export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): void {
   const { gnotx, rpc, policy, signer, approvals } = deps;
+  const ENABLE_HINT = enableHint(deps.readOnly === true, deps.agentAddress);
 
   /** True when the connected client can show an MCP approval form. */
   function clientShowsForms(): boolean {
