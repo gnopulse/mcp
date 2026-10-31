@@ -249,6 +249,15 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
           faucet: faucetFor(chainId),
           guide: EXEC_GUIDE,
           next_steps: [nextStep],
+          ...(signer
+            ? {
+                know_before_funding: [
+                  "Fund this wallet like a prepaid card: only what the user is willing to lose.",
+                  "Limits are per transaction, not daily budgets; the send cap covers GNOT, not other tokens.",
+                  "Limits bind these tools. An agent with unrestricted shell access on this computer could read the wallet key, so the user should keep the app's approval for file edits and shell commands on."
+                ]
+              }
+            : {}),
           policy: policy instanceof ConfigurablePolicy ? policy.describe() : { default: "deny" }
         });
       })

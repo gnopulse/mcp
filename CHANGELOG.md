@@ -8,6 +8,8 @@
 - A refused action (`policy_denied`) carries `how_to_allow`: the agent is told not to retry or work around it, but to ask the user, naming the setting and the change that would allow it and that the app must restart.
 - `gno_agent_status`, when ready, says what the agent may do (realms, functions, send cap, expiry) and whether it acts alone or the user approves each transaction.
 - Autonomous mode's start-up error names each missing limit and gives a working example, or points to approval mode.
+- `npx @gnopulse/mcp setup` asks which app, which network, what the agent may do (data only, approve each transaction, or autonomous with a preset, a send cap and a duration), shows the config, backs up and writes it for Claude Code, Codex, Cursor, VS Code or Claude Desktop, then creates the wallet and prints its address and what to know before funding it. Autonomous grants it writes expire at a fixed time, so restarting the app does not renew them.
+- `gno_agent_status` lists what to know before funding the wallet whenever signing is on.
 - The README opens execution with a short guide: the three modes, configs to copy, funding like a prepaid card, how to widen limits, and what limits do not cover.
 - With signing off, `gno_agent_status` names the local agent wallet instead of saying the server holds no keys, and says that only the server's settings, not a tool call, turn signing on. The hosted server still says it holds no wallet keys.
 

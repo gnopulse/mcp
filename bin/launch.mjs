@@ -285,4 +285,5 @@ async function main() {
   mcp.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
 }
 
-main().catch((e) => die(e?.stack || String(e)));
+if (process.argv[2] === "setup") await import("./setup.mjs");
+else main().catch((e) => die(e?.stack || String(e)));

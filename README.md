@@ -38,6 +38,14 @@ The agent gets its own small wallet on your computer. What it may do is chosen i
 | Approve each transaction | `user-approval` | The agent proposes; you approve each one in a system window on your computer or in your app's approval form. |
 | Autonomous | `microservice` | The agent acts without asking, inside limits you set: which realms and functions, how much per transaction, and until when. |
 
+The quickest way is to run this in a terminal and answer a few questions; it writes your app's settings (after showing them and backing up the file) and creates the wallet:
+
+```
+npx -y @gnopulse/mcp setup
+```
+
+To set it up by hand instead:
+
 1. Add one of these to your app's MCP settings (Claude Code, Codex, Cursor, VS Code, Claude Desktop):
 
    ```json
