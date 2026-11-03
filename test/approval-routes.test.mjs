@@ -133,8 +133,9 @@ test("a refused action tells the agent to ask, and which setting the user change
   });
   const r = body(await handlers.gno_call({ pkgpath: "gno.land/r/gnoswap/gns", func: "Approve", args: ["g1x", "1"] }));
   assert.equal(r.status, "policy_denied");
-  assert.match(r.how_to_allow, /Do not retry it or look for another way\. Ask the user/);
-  assert.match(r.how_to_allow, /GNOPULSE_POLICY_ALLOW_REALMS in this GnoPulse server's settings \(add gno\.land\/r\/gnoswap\/gns\) and restart/);
+  assert.match(r.next_step, /Do not retry this or look for another way\. Put the ask_user question to the user and wait/);
+  assert.match(r.ask_user, /realm gno\.land\/r\/gnoswap\/gns not in the allowlist.*GNOPULSE_POLICY_ALLOW_REALMS \(add gno\.land\/r\/gnoswap\/gns\).*Do you want to allow it\?$/);
+  assert.match(r.how_to_allow, /^Only if the user says yes: they change GNOPULSE_POLICY_ALLOW_REALMS in this GnoPulse server's settings \(add gno\.land\/r\/gnoswap\/gns\) and restart/);
 });
 
 test("the ready status says what the agent may do and how to ask for more", async () => {

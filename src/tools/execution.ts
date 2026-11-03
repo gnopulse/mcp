@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { approvalChallenge, CLIENT_APPROVAL_META, verifyClientApproval } from "../signer/clientApproval.js";
 /**
  * Execution tools. Every write follows the same flow:
@@ -73,16 +74,27 @@ function enableHint(hosted: boolean, wallet?: string): string {
       "Execution is disabled: this hosted server is read/simulate-only and holds no wallet keys. To act on-chain, " +
       `the user runs the GnoPulse MCP locally with GNOPULSE_AGENT_ID and GNOPULSE_SIGNER=user-approval (see ${EXEC_GUIDE}).`
     );
+  if (process.env.GNOPULSE_WALLET_SETUP_NEEDED === "1")
+    return (
+      "Signing is off because this agent has no wallet yet. Wallets are made only by setup, which saves a recovery " +
+      "phrase first. Tell the user to run `npx @gnopulse/mcp setup` in their own terminal and restart the app. Do not " +
+      "run it for them, and never ask for a recovery phrase. Data tools work now."
+    );
   const enable =
     "To act on-chain, the user sets GNOPULSE_SIGNER=user-approval in this server's settings (or asks the agent to " +
     `edit them) and restarts it; the write tools (${WRITE_TOOLS}) are listed only then. No tool call can turn ` +
     `signing on. See ${EXEC_GUIDE}.`;
   return wallet
     ? `Signing is off. This computer holds the agent wallet ${wallet}, but this server will not sign with it. ${enable}`
-    : `Signing is off and no agent wallet is configured; set GNOPULSE_AGENT_ID to create one. ${enable}`;
+    : `Signing is off and no agent wallet is configured. To make one, the user runs \`npx @gnopulse/mcp setup\` in their own terminal. See ${EXEC_GUIDE}.`;
 }
 
-/** What to tell the agent when the user's limits refuse an action: ask, never work around it. */
+const NO_BACKUP =
+  "This wallet has no recovery backup, so losing this computer loses its funds. Tell the user to run " +
+  "`npx @gnopulse/mcp backup` in their own terminal. Do not run it for them, and never ask for a recovery " +
+  "phrase or passphrase.";
+
+/** What to tell the agent when the user's limits refuse an action: stop and ask, never work around it. */
 function refusal(decision: PolicyDecision, extra: Record<string, unknown> = {}) {
   if (decision.allow) throw new Error("refusal() needs a denied decision");
   return {
@@ -90,11 +102,17 @@ function refusal(decision: PolicyDecision, extra: Record<string, unknown> = {}) 
     reason: decision.reason,
     ...(decision.setting
       ? {
+          next_step:
+            "Stop here. Do not retry this or look for another way. Put the ask_user question to the user and wait " +
+            "for their answer. Do not change any setting until they say yes.",
+          ask_user:
+            `This is outside the limits you set for this agent: ${decision.reason}. Allowing it means changing ` +
+            `${decision.setting} (${decision.change}) and restarting the app. Do you want to allow it?`,
           how_to_allow:
-            "This is outside what the user allowed this agent to do. Do not retry it or look for another way. " +
-            `Ask the user whether to allow it. If they agree, they (or you, if they ask) change ${decision.setting} ` +
-            `in this GnoPulse server's settings (${decision.change}) and restart the app. Agent actions within the ` +
-            "new limits then run under the same checks. Keep only what the user is willing to lose in the agent wallet."
+            `Only if the user says yes: they change ${decision.setting} in this GnoPulse server's settings ` +
+            `(${decision.change}) and restart the app, or you make the change if they ask you to. Agent actions ` +
+            "within the new limits then run under the same checks. Keep only what the user is willing to lose in " +
+            "the agent wallet."
         }
       : {}),
     ...extra
@@ -124,6 +142,11 @@ export interface ExecutionDeps {
 
 export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): void {
   const { gnotx, rpc, policy, signer, approvals } = deps;
+  /** Read each time, so a backup made while the server runs shows without a restart. */
+  const recovery = (): "saved" | "none" | undefined => {
+    const mark = process.env.GNOPULSE_WALLET_BACKUP_MARK;
+    return mark ? (existsSync(mark) ? "saved" : "none") : undefined;
+  };
   const ENABLE_HINT = enableHint(deps.readOnly === true, deps.agentAddress);
 
   /** True when the connected client can show an MCP approval form. */
@@ -254,10 +277,12 @@ export function registerExecutionTools(server: McpServer, deps: ExecutionDeps): 
                 know_before_funding: [
                   "Fund this wallet like a prepaid card: only what the user is willing to lose.",
                   "Limits are per transaction, not daily budgets; the send cap covers GNOT, not other tokens.",
-                  "Limits bind these tools. An agent with unrestricted shell access on this computer could read the wallet key, so the user should keep the app's approval for file edits and shell commands on."
+                  "Limits bind these tools. An agent with unrestricted shell access on this computer could read the wallet key, so the user should keep the app's approval for file edits and shell commands on.",
+                  ...(recovery() === "none" ? [NO_BACKUP] : [])
                 ]
               }
             : {}),
+          ...(recovery() ? { recovery_backup: recovery() } : {}),
           policy: policy instanceof ConfigurablePolicy ? policy.describe() : { default: "deny" }
         });
       })

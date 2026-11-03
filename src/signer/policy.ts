@@ -115,7 +115,7 @@ export class ConfigurablePolicy implements PolicyEngine {
     const { pkgpath: realm, func } = targetForIntent(intent);
 
     if (c.expiresAt !== undefined && this.now() >= c.expiresAt) {
-      return deny("policy expired (session grant ended)", "GNOPULSE_POLICY_EXPIRES_IN", "set a new duration in seconds, or GNOPULSE_POLICY_EXPIRES_AT to a future unix time");
+      return deny("policy expired (session grant ended)", "GNOPULSE_POLICY_EXPIRES_AT", "set it to a future unix time, since it wins over GNOPULSE_POLICY_EXPIRES_IN; or remove it and set GNOPULSE_POLICY_EXPIRES_IN to a duration in seconds; or run setup again");
     }
     if (c.feesOnly) {
       const amount = parseUgnot(intent.send);
