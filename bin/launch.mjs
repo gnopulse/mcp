@@ -1,19 +1,28 @@
 #!/usr/bin/env node
-// `gnopulse-mcp` launcher. Resolves the gnotx signer binary, creates the agent key on first run,
-// starts an isolated execution-disabled `gnotx serve` when an agent ID is configured,
-// then runs the MCP server over stdio. Signing requires explicit configuration.
+// `gnopulse-mcp` launcher. Resolves the gnotx signer binary, starts an isolated execution-disabled
+// `gnotx serve` for an existing agent wallet, then runs the MCP server over stdio. Wallets come from
+// `setup`, which saves the recovery phrase first; with none, the server runs with data tools only.
+// Signing requires explicit configuration.
 // The key stays in the signer process.
 // stdout belongs to the MCP JSON-RPC stream, so this script logs only to stderr.
 import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
-import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  backupMark,
+  ensureSecret,
+  keyName,
+  randomSecret,
+  resolveGnotx,
+  runGnotx,
+  secretLine,
+  walletDir,
+  withoutSecrets,
+  withoutSignerKeys
+} from "./wallet-lib.mjs";
 
-const require = createRequire(import.meta.url);
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(PKG_ROOT, "dist");
 const MCP_ENTRY = path.join(DIST, "index.js");
@@ -21,17 +30,13 @@ const MCP_ENTRY = path.join(DIST, "index.js");
 const env = process.env;
 const AGENT_ID = env.GNOPULSE_AGENT_ID;
 const CHAIN_ID = env.GNO_CHAIN_ID || "gnoland-1";
-const HOME_ROOT = env.GNOPULSE_AGENT_HOME || path.join(os.homedir(), ".gnopulse-agent");
-const HOME_DIR = path.join(HOME_ROOT, "agents", CHAIN_ID, AGENT_ID || "unconfigured");
+const HOME_DIR = walletDir(env, CHAIN_ID, AGENT_ID || "unconfigured");
 const SIGNER_KIND = env.GNOPULSE_SIGNER || "none";
-const KEY_NAME = env.GNOPULSE_AGENT_KEY || "gpagent";
+const KEY_NAME = keyName(env);
 let signerAddr = env.GNOPULSE_SIGNER_ADDR;
 const MAX_SEND = env.GNOPULSE_POLICY_MAX_SEND_UGNOT || "5000000";
 const ALLOW_REALMS = env.GNOPULSE_POLICY_ALLOW_REALMS || "";
 const SIGNER_LOG = path.join(HOME_DIR, "signer.log");
-
-const PLATFORMS = { darwin: "darwin", linux: "linux", win32: "windows" };
-const ARCHES = { arm64: "arm64", x64: "amd64" };
 
 let ownedSigner;
 let mcpChild;
@@ -60,57 +65,6 @@ const die = (msg) => {
   process.exit(1);
 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isRunnable(bin) {
-  if (!bin || !fs.existsSync(bin)) return false;
-  return !spawnSync(bin, ["-h"], { encoding: "utf8" }).error;
-}
-
-// GNOTX_BIN wins; otherwise use the platform package installed as an optional dependency.
-function resolveGnotx() {
-  if (env.GNOTX_BIN) {
-    if (isRunnable(env.GNOTX_BIN)) return env.GNOTX_BIN;
-    die(`GNOTX_BIN=${env.GNOTX_BIN} is not a runnable gnotx`);
-  }
-  const osName = PLATFORMS[process.platform];
-  const arch = ARCHES[process.arch];
-  if (!osName || !arch)
-    die(`unsupported platform ${process.platform}/${process.arch}; set GNOTX_BIN to a gnotx you built`);
-
-  const pkg = `@gnopulse/gnotx-${osName}-${arch}`;
-  let bin;
-  try {
-    bin = path.join(
-      path.dirname(require.resolve(`${pkg}/package.json`)),
-      osName === "windows" ? "gnotx.exe" : "gnotx"
-    );
-  } catch {
-    die(`${pkg} is not installed; reinstall @gnopulse/mcp or set GNOTX_BIN`);
-  }
-  if (!isRunnable(bin)) die(`signer at ${bin} is not runnable`);
-  return bin;
-}
-
-// Read a secret from `file`, creating it (mode 0600) on first use.
-function ensureSecret(file, length) {
-  if (fs.existsSync(file)) return fs.readFileSync(file, "utf8").trim();
-  const secret = randomBytes(length)
-    .toString("base64")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .slice(0, length);
-  const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}`;
-  try {
-    fs.writeFileSync(temporary, secret, { mode: 0o600, flag: "wx" });
-    try {
-      fs.linkSync(temporary, file);
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-    return fs.readFileSync(file, "utf8").trim();
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
-}
 
 // The /healthz body of a signer listening on signerAddr, or null if none answers.
 // Sends no token, so it is safe against an unknown process.
@@ -141,16 +95,11 @@ function assertOwnSigner(health, address) {
 }
 
 function ensureKey(gnotx, password) {
-  const result = spawnSync(gnotx, ["keygen", "-home", HOME_DIR, "-key", KEY_NAME], {
-    encoding: "utf8",
-    env: { ...env, GNOTX_PASSWORD: password }
-  });
-  if (result.status !== 0) die(`keygen failed: ${(result.stderr || result.stdout || "").trim()}`);
   let address;
   try {
-    address = JSON.parse(result.stdout).address;
-  } catch {
-    die(`keygen output is not JSON: ${result.stdout}`);
+    address = runGnotx(gnotx, ["keygen", "-home", HOME_DIR, "-key", KEY_NAME, "-secrets-stdin"], { password }, env).address;
+  } catch (e) {
+    die(`keygen failed: ${e.message}`);
   }
   if (!address) die("keygen returned no address");
   return address;
@@ -178,20 +127,18 @@ async function ensureSigner(gnotx, password, token, remotes, address) {
     "-remotes",
     remotes,
     "-chainid",
-    CHAIN_ID
+    CHAIN_ID,
+    "-secrets-stdin"
   ];
   if (SIGNER_KIND !== "none") args.push("-allow-execute");
   // Keep ownership so EOF, startup errors and signals can stop our signer.
   ownedSigner = spawn(gnotx, args, {
-    stdio: ["ignore", logFd, logFd],
-    env: {
-      ...env,
-      GNOTX_PASSWORD: password,
-      GNOTX_SERVE_TOKEN: token,
-      GNOTX_GAS_FEE: "auto"
-    }
+    stdio: ["pipe", logFd, logFd],
+    env: { ...withoutSecrets(env), GNOTX_GAS_FEE: "auto" }
   });
   fs.closeSync(logFd);
+  ownedSigner.stdin?.on("error", () => {});
+  ownedSigner.stdin?.end(secretLine({ password, serve_token: token }));
   ownedSigner.on("error", () => die("could not start the signer"));
   ownedSigner.on("exit", () => {
     if (stopping) return;
@@ -219,6 +166,21 @@ async function privateSignerAddress() {
   return `127.0.0.1:${port}`;
 }
 
+function startServer(childEnv) {
+  const child = spawn(process.execPath, [MCP_ENTRY], { stdio: "inherit", env: childEnv });
+  mcpChild = child;
+  child.on("error", () => die("could not start the MCP server"));
+  child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
+}
+
+// No wallet yet, so no signer: the data tools work and the status tells the user to run setup.
+function startWithoutWallet() {
+  log(`agent ${AGENT_ID} has no wallet on chain ${CHAIN_ID}, so signing is off. Run: npx @gnopulse/mcp setup`);
+  const childEnv = { ...withoutSignerKeys(env), GNOPULSE_SIGNER: "none", GNOPULSE_WALLET_SETUP_NEEDED: "1", GNO_CHAIN_ID: CHAIN_ID };
+  for (const name of ["GNOTX_SERVICE_URL", "GNOPULSE_AGENT_ADDRESS"]) delete childEnv[name];
+  startServer(childEnv);
+}
+
 async function main() {
   if (!fs.existsSync(MCP_ENTRY)) die(`MCP server not built at ${MCP_ENTRY}`);
   if (!["none", "user-approval", "microservice", "tee"].includes(SIGNER_KIND))
@@ -227,16 +189,7 @@ async function main() {
   if (AGENT_ID && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(AGENT_ID))
     die("GNOPULSE_AGENT_ID must be 1-64 lowercase letters, digits, underscores or hyphens.");
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(CHAIN_ID)) die("Invalid GNO_CHAIN_ID for wallet storage.");
-  if (!AGENT_ID && SIGNER_KIND === "none") {
-    const child = spawn(process.execPath, [MCP_ENTRY], {
-      stdio: "inherit",
-      env
-    });
-    mcpChild = child;
-    child.on("error", () => die("could not start the MCP server"));
-    child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
-    return;
-  }
+  if (!AGENT_ID && SIGNER_KIND === "none") return startServer(env);
   if (SIGNER_KIND === "microservice" || SIGNER_KIND === "tee") {
     const { loadPolicy } = await import(pathToFileURL(path.join(DIST, "signer/policy.js")).href);
     const policy = loadPolicy(env);
@@ -249,15 +202,30 @@ async function main() {
           "Or set GNOPULSE_SIGNER=user-approval to approve each transaction instead."
       );
   }
+  const passFile = path.join(HOME_DIR, ".pass");
+  let gnotx;
+  try {
+    // A folder with no .pass has no wallet, and the data tools need no signer binary.
+    if (env.GNOPULSE_ALLOW_NO_BACKUP !== "1" && !fs.existsSync(passFile)) return startWithoutWallet();
+    gnotx = resolveGnotx(env);
+    if (env.GNOPULSE_ALLOW_NO_BACKUP !== "1") {
+      const args = ["keygen", "-home", HOME_DIR, "-key", KEY_NAME, "-no-create", "-secrets-stdin"];
+      const password = fs.readFileSync(passFile, "utf8").trim();
+      if (!runGnotx(gnotx, args, { password }, env).address) return startWithoutWallet();
+    }
+  } catch (e) {
+    die(e.message);
+  }
   signerAddr ||= await privateSignerAddress();
   fs.mkdirSync(HOME_DIR, { recursive: true, mode: 0o700 });
 
   const { DEFAULT_RPC_URLS } = await import(pathToFileURL(path.join(DIST, "config.js")).href);
   const remotes = env.GNO_RPC_URLS || DEFAULT_RPC_URLS.join(",");
 
-  const gnotx = resolveGnotx();
-  const password = ensureSecret(path.join(HOME_DIR, ".pass"), 24);
-  const token = ensureSecret(path.join(HOME_DIR, ".serve-token"), 32);
+  const password = ensureSecret(passFile, 24);
+  // A fresh token each launch, held only by this launcher's two children. Earlier versions saved it.
+  const token = randomSecret(32);
+  fs.rmSync(path.join(HOME_DIR, ".serve-token"), { force: true });
   const address = ensureKey(gnotx, password);
   await ensureSigner(gnotx, password, token, remotes, address);
 
@@ -267,9 +235,9 @@ async function main() {
   );
 
   const mcp = spawn(process.execPath, [MCP_ENTRY], {
-    stdio: "inherit",
+    stdio: ["inherit", "inherit", "inherit", "pipe"],
     env: {
-      ...env,
+      ...withoutSignerKeys(env),
       GNOPULSE_SIGNER: SIGNER_KIND,
       GNOPULSE_AGENT_ADDRESS: address,
       GNOPULSE_POLICY_DEFAULT: env.GNOPULSE_POLICY_DEFAULT || (ALLOW_REALMS ? "deny" : "allow"),
@@ -277,13 +245,17 @@ async function main() {
       GNOPULSE_POLICY_MAX_SEND_UGNOT: MAX_SEND,
       GNO_CHAIN_ID: CHAIN_ID,
       GNOTX_SERVICE_URL: `http://${signerAddr}`,
-      GNOTX_SERVICE_TOKEN: token
+      GNOTX_SERVICE_TOKEN_FD: "3",
+      GNOPULSE_WALLET_BACKUP_MARK: backupMark(HOME_DIR)
     }
   });
+  mcp.stdio?.[3]?.on("error", () => {});
+  mcp.stdio?.[3]?.end(token);
   mcpChild = mcp;
   mcp.on("error", () => die("could not start the MCP server"));
   mcp.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
 }
 
 if (process.argv[2] === "setup") await import("./setup.mjs");
+else if (process.argv[2] === "backup") await import("./backup.mjs");
 else main().catch((e) => die(e?.stack || String(e)));

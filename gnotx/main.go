@@ -194,7 +194,7 @@ type result struct {
 	Extra     map[string]string `json:"extra,omitempty"`   // command-specific details
 }
 
-const commands = "account|call|swap|approve|realmaddr|addpkg|serve|verify|keygen"
+const commands = "account|call|swap|approve|realmaddr|addpkg|serve|verify|keygen|mnemonic|export"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -220,6 +220,10 @@ func main() {
 		err = cmdVerify(os.Args[2:])
 	case "keygen":
 		err = cmdKeygen(os.Args[2:])
+	case "mnemonic":
+		err = cmdMnemonic(os.Args[2:])
+	case "export":
+		err = cmdExport(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Printf("gnotx <%s> [flags]; -h on a subcommand for its flags\n", commands)
 		return
@@ -252,13 +256,23 @@ func keysFromDir(dir string) (keys.Keybase, error) { return keys.NewKeyBaseFromD
 func cmdKeygen(args []string) error {
 	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
 	var home, key, password string
-	var showMnemonic bool
+	var showMnemonic, secretsStdin, noCreate bool
 	fs.StringVar(&home, "home", defHome(), "keybase directory (holds keys.db)")
 	fs.StringVar(&key, "key", env("GNOTX_KEY", "gpagent"), "key name to create/reuse")
 	fs.StringVar(&password, "password", os.Getenv("GNOTX_PASSWORD"), "keybase password (or set GNOTX_PASSWORD)")
 	fs.BoolVar(&showMnemonic, "show-mnemonic", false, "print the mnemonic on first creation (recovery)")
+	fs.BoolVar(&secretsStdin, "secrets-stdin", false, "read the password, and optionally the mnemonic to use, as one JSON line on stdin")
+	fs.BoolVar(&noCreate, "no-create", false, "report an existing key but create nothing")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	var mnemonic string
+	if secretsStdin {
+		secrets, err := readSecrets(os.Stdin)
+		if err != nil {
+			return err
+		}
+		password, mnemonic = secrets.Password, secrets.Mnemonic
 	}
 	if home == "" {
 		return fmt.Errorf("keygen needs -home (no user config directory found)")
@@ -282,19 +296,26 @@ func cmdKeygen(args []string) error {
 		if gerr != nil {
 			return fmt.Errorf("load key %q: %w", key, gerr)
 		}
+		if mnemonic != "" {
+			return fmt.Errorf("key %q already exists; it was not replaced", key)
+		}
 		out["address"] = info.GetAddress().String()
 		out["created"] = "false"
 		emit(out)
 		return nil
 	}
 
-	entropy, err := bip39.NewEntropy(256)
-	if err != nil {
-		return fmt.Errorf("entropy: %w", err)
+	if noCreate {
+		out["created"] = "false"
+		emit(out)
+		return nil
 	}
-	mnemonic, err := bip39.NewMnemonic(entropy)
-	if err != nil {
-		return fmt.Errorf("mnemonic: %w", err)
+	if mnemonic == "" {
+		if mnemonic, err = newMnemonic(); err != nil {
+			return err
+		}
+	} else if !bip39.IsMnemonicValid(mnemonic) {
+		return fmt.Errorf("the mnemonic is not valid")
 	}
 	info, err := kb.CreateAccount(key, mnemonic, "", password, 0, 0)
 	if err != nil {
@@ -781,11 +802,19 @@ func cmdServe(args []string) error {
 	callerFlag := fs.String("caller", "", "public caller address for a keyless simulation service")
 	insecureNoToken := fs.Bool("insecure-no-token", false,
 		"allow running without GNOTX_SERVE_TOKEN (no authentication)")
+	secretsStdin := fs.Bool("secrets-stdin", false, "read the password and service token as one JSON line on stdin")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	token := os.Getenv("GNOTX_SERVE_TOKEN")
+	if *secretsStdin {
+		secrets, err := readSecrets(os.Stdin)
+		if err != nil {
+			return err
+		}
+		c.password, token = secrets.Password, secrets.ServeToken
+	}
 	if *allowExecute && token == "" {
 		return fmt.Errorf("execution requires an authenticated service token")
 	}

@@ -212,6 +212,9 @@ Set `GNOTX_TEE_PROVIDER` to sign with a key outside the keybase:
   A failed simulation is never broadcast.
 - `serve` `/execute` broadcasts without a `-broadcast` flag. Keep `-addr` on
   localhost and keep `GNOTX_SERVE_TOKEN` secret. Avoid `-insecure-no-token`.
+- `keygen`, `export` and `serve` read secrets as one JSON line on stdin with
+  `-secrets-stdin`; `export` always does. That keeps them out of the process's
+  arguments and environment. `gnotx mnemonic` prints a new phrase and stores nothing.
 - Prefer `GNOTX_PASSWORD` over `-password`, which is visible in the process
   list.
 

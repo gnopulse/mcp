@@ -170,6 +170,7 @@ export function applyToml(text, name, entry) {
 /** What people should know before they fund the wallet. Shown at the end of setup. */
 export const BEFORE_YOU_FUND = [
   "Fund the agent wallet like a prepaid card: only what you are willing to lose.",
+  "Keep your recovery phrase offline. A wallet without one can be backed up with `npx @gnopulse/mcp backup`.",
   "Limits are per transaction, not daily budgets, and the send cap covers GNOT only, not other tokens.",
   "Limits bind the GnoPulse tools. An agent with unrestricted shell access on this computer could read the",
   "  wallet key in ~/.gnopulse-agent, so keep your app's approval for file edits and shell commands on.",

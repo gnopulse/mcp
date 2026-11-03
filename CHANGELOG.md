@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.9 (2026-11-03)
+
+- `setup` shows a new wallet's 24-word recovery phrase once, on a temporary terminal screen, and creates the wallet only after you confirm two of the words. Before, the phrase was discarded unseen, so a lost folder meant a lost wallet.
+- `npx @gnopulse/mcp backup` writes an existing wallet's key to a passphrase-encrypted file that `gnokey import` reads, and decrypts it again before reporting success. Both commands refuse to run without a real terminal.
+- The server no longer creates a wallet on its own. With no wallet it starts with data tools and signing off, and `gno_agent_status` tells the user to run `setup`. Existing wallets keep working, and `GNOPULSE_ALLOW_NO_BACKUP=1` restores the old behavior for machines with no terminal.
+- `setup` now confirms first, then creates the wallet and its phrase, and writes the app's config last, so an app that reloads its config cannot create a wallet with no phrase in between.
+- The expired-policy advice names `GNOPULSE_POLICY_EXPIRES_AT`, which wins over `GNOPULSE_POLICY_EXPIRES_IN`. Setup writes it, so changing the other had no effect.
+- `gno_agent_status` reports `recovery_backup`, and tells the agent to send the user to `backup`, never to run it or ask for a phrase.
+- The signer's access token is created fresh at each launch and never saved; an old `.serve-token` file is deleted on start. The launcher passes the wallet password and token to the signer and MCP server through pipes, not environment variables, which other programs under the same account can read, and the MCP server no longer inherits `GNOTX_TEE_MNEMONIC` or `TURNKEY_API_PRIVATE_KEY`. The wallet key and its `.pass` file are unchanged, so an agent with shell access can still read them.
+- A refused action now carries `next_step` and `ask_user`: the agent stops and puts one question to the user, naming the setting that would allow it, and waits for the answer. `how_to_allow` applies only after they say yes. Before, agents could read `how_to_allow` as steps to relay and skip the question.
+
 ## 0.3.8 (2026-10-30)
 
 - Approval works in clients that cannot show MCP forms, such as Claude Code before its approval forms: `gno_confirm` opens a native approval window (macOS, Windows, Linux with zenity or kdialog) showing the action and its full cost. The window is tried before the client's form; `GNOPULSE_APPROVAL_DIALOG=off` skips it.

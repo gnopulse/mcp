@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { loadApprovalPublicKey } from "./signer/clientApproval.js";
 /** Server configuration, read from the environment with gnoland-1 mainnet defaults. */
 
@@ -43,6 +44,16 @@ const envList = (name: string): string[] | undefined =>
     .map((s) => s.trim())
     .filter(Boolean);
 
+let pipedToken: string | undefined;
+
+/** The launcher sends the signer token through a pipe, so it stays out of this process's environment. */
+function signerToken(): string | undefined {
+  const fd = env("GNOTX_SERVICE_TOKEN_FD");
+  if (!fd) return env("GNOTX_SERVICE_TOKEN");
+  pipedToken ??= readFileSync(Number(fd), "utf8").trim();
+  return pipedToken;
+}
+
 export function loadConfig(): Config {
   return {
     apiBase: trimSlashes(env("GNOPULSE_API_BASE") ?? "https://gnopulse.xyz"),
@@ -52,7 +63,7 @@ export function loadConfig(): Config {
     chainId: env("GNO_CHAIN_ID") ?? "gnoland-1",
     grc20Registry: env("GNO_GRC20_REGISTRY") ?? "gno.land/r/nt/grc20reg/v0",
     signerServiceUrl: trimSlashes(env("GNOTX_SERVICE_URL") ?? "http://127.0.0.1:8787"),
-    signerServiceToken: env("GNOTX_SERVICE_TOKEN"),
+    signerServiceToken: signerToken(),
     agentId: env("GNOPULSE_AGENT_ID"),
     agentAddress: env("GNOPULSE_AGENT_ADDRESS"),
     approvalPublicKey: loadApprovalPublicKey(env("GNOPULSE_APPROVAL_PUBLIC_KEY_FILE")),

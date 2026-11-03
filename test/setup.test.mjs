@@ -13,6 +13,10 @@ import {
   serverEntry
 } from "../bin/setup-lib.mjs";
 
+import os from "node:os";
+import path from "node:path";
+import { checkPositions, expandHome, sameWord, withoutSecrets, withoutSignerKeys } from "../bin/wallet-lib.mjs";
+
 const entry = serverEntry({ GNOPULSE_SIGNER: "user-approval", GNOPULSE_AGENT_ID: "a" }, "/usr/local/bin/npx", "0.3.8");
 
 test("amounts are typed in GNOT and stored in ugnot", () => {
@@ -83,13 +87,39 @@ test("existing GnoPulse servers are found, so setup can warn about OpenAI's tool
 
 test("each app's settings file is where the app reads it", () => {
   const mac = appTargets("darwin", "/Users/u");
-  assert.equal(mac.codex.file, "/Users/u/.codex/config.toml");
-  assert.equal(mac["claude-desktop"].file, "/Users/u/Library/Application Support/Claude/claude_desktop_config.json");
-  assert.equal(mac.vscode.file, "/Users/u/Library/Application Support/Code/User/mcp.json");
-  assert.equal(appTargets("linux", "/home/u").cursor.file, "/home/u/.cursor/mcp.json");
+  assert.equal(mac.codex.file, path.join("/Users/u", ".codex", "config.toml"));
+  assert.equal(mac["claude-desktop"].file, path.join("/Users/u", "Library", "Application Support", "Claude", "claude_desktop_config.json"));
+  assert.equal(mac.vscode.file, path.join("/Users/u", "Library", "Application Support", "Code", "User", "mcp.json"));
+  assert.equal(appTargets("linux", "/home/u").cursor.file, path.join("/home/u", ".cursor", "mcp.json"));
 });
 
 test("a local test package runs through npx --package and its bin", () => {
   assert.deepEqual(serverEntry({}, "npx", "0.3.8", "/tmp/gnopulse-mcp-0.3.8.tgz").args, ["-y", "--package", "/tmp/gnopulse-mcp-0.3.8.tgz", "gnopulse-mcp"]);
   assert.deepEqual(serverEntry({}, "npx", "0.3.8").args, ["-y", "@gnopulse/mcp@0.3.8"]);
+});
+
+test("the phrase check asks for two different words and forgives spacing and case", () => {
+  for (const r of [0, 0.5, 0.999]) {
+    const [a, b] = checkPositions(24, () => r);
+    assert.ok(a >= 1 && b <= 24 && a < b, `${a} ${b}`);
+  }
+  assert.ok(sameWord(" Zebra ", "zebra"));
+  assert.ok(!sameWord("zebras", "zebra"));
+});
+
+test("children never inherit signer secrets", () => {
+  const clean = withoutSecrets({ PATH: "/bin", GNOTX_PASSWORD: "p", GNOTX_SERVE_TOKEN: "t", GNOTX_SERVICE_TOKEN: "s" });
+  assert.deepEqual(clean, { PATH: "/bin" });
+});
+
+test("the server never gets an external signer's credentials", () => {
+  const clean = withoutSignerKeys({ PATH: "/bin", GNOTX_TEE_MNEMONIC: "m", TURNKEY_API_PRIVATE_KEY: "k", GNOTX_PASSWORD: "p" });
+  assert.deepEqual(clean, { PATH: "/bin" });
+});
+
+test("a typed ~ means the home folder, and only at the start", () => {
+  assert.equal(expandHome("~/w.key"), path.join(os.homedir(), "w.key"));
+  assert.equal(expandHome("~"), os.homedir());
+  assert.equal(expandHome("a/~/w.key"), "a/~/w.key");
+  assert.equal(expandHome("~other/w.key"), "~other/w.key");
 });

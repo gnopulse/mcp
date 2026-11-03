@@ -44,9 +44,11 @@ The quickest way is to run this in a terminal and answer a few questions; it wri
 npx -y @gnopulse/mcp setup
 ```
 
-To set it up by hand instead:
+Only `setup` creates a wallet, because it saves the recovery phrase first. With no wallet, the server still starts with its data tools and signing off, and `gno_agent_status` says to run `setup`. A server or CI machine with no terminal can opt out with `GNOPULSE_ALLOW_NO_BACKUP=1`, which creates a wallet that has no phrase.
 
-1. Add one of these to your app's MCP settings (Claude Code, Codex, Cursor, VS Code, Claude Desktop):
+To change the settings by hand after `setup`:
+
+1. Edit your app's MCP settings (Claude Code, Codex, Cursor, VS Code, Claude Desktop):
 
    ```json
    { "mcpServers": { "gnopulse": {
@@ -71,12 +73,21 @@ To set it up by hand instead:
    Autonomous mode will not start without all six; the error names any that are missing. `GNOPULSE_POLICY_EXPIRES_IN` counts from each start of the server, so a restart renews it; use `GNOPULSE_POLICY_EXPIRES_AT` (unix seconds) for a fixed end, as `setup` does.
 2. Restart the app and ask the agent for its wallet. `gno_agent_status` reports the address, the balance, what it may do, and how you approve.
 3. Send it GNOT. Treat it like a prepaid card: fund only what you are willing to lose. A first GnoSwap swap also locks about 2 GNOT as a storage deposit.
-4. Ask it to act. If something is outside your limits, the agent is told not to work around it but to ask you, naming the setting that would allow it. To allow more, change that setting (or ask the agent to) and restart the app.
+4. Ask it to act. If something is outside your limits, the agent is told to stop and ask whether you want to allow it, naming the setting that would. If you do, change that setting (or ask the agent to) and restart the app.
+
+Back it up before you fund it:
+
+- `npx @gnopulse/mcp setup` shows a new wallet's 24-word recovery phrase once, on a temporary terminal screen, and creates the wallet only after you confirm two of the words. The phrase is not saved anywhere and can't be shown again.
+- A wallet with no saved phrase, such as one made before 0.3.9 or with `GNOPULSE_ALLOW_NO_BACKUP=1`, has no phrase to show. `npx @gnopulse/mcp backup` writes its key to a file locked with a passphrase you choose. Restore it with `gnokey import`. You can also move the funds to a new wallet made by `setup`.
+- Both commands run only in a real terminal, and no MCP tool can reach them. Never paste a phrase or passphrase into a chat. Anyone holding them controls the wallet, and your limits do not apply to them.
+- `gno_agent_status` reports `recovery_backup` as `saved` or `none`. `saved` means you completed one of these steps, not that your copy still exists.
 
 Things to know:
 
-- Limits apply to the GnoPulse tools. An agent with unrestricted shell access on your computer could read the wallet key in `~/.gnopulse-agent`, so keep your app's own approval for file edits and shell commands on when an agent wallet is funded.
+- Using GnoPulse means agreeing to its [terms, refund policy and privacy notice](https://gnopulse.xyz/#/terms).
+- Limits apply to the GnoPulse tools. An agent with unrestricted shell access on your computer could read the wallet key in `~/.gnopulse-agent`, so keep your app's own approval for file edits and shell commands on when an agent wallet is funded. The signer's access token is new at each launch and never saved, and the signer's secrets reach it through a pipe, not environment variables, but this does not stop an agent that can read the key files.
 - Limits are per transaction, not daily budgets, and the send cap covers GNOT only, not GRC20 tokens. Allowing `Approve` or a token transfer function grants what those calls permit.
+- Gnosh has its own signing, where you type a key's password for each signature. Add GnoPulse to it for data (the hosted server, or the local package with `GNOPULSE_SIGNER=none`) and sign with Gnosh's `gnokey` tool.
 - Web chat apps (claude.ai, ChatGPT) can only use the hosted server, which reads data and cannot sign. Claude's chat apps may decline to make transactions even with signing on; Claude Code does not.
 - OpenAI models see at most 128 tools, so run one GnoPulse server at a time in ChatGPT or Codex.
 
@@ -84,7 +95,7 @@ Things to know:
 
 Use matching MCP and native binary versions; do not mix them with an older signing backend.
 
-With no agent ID, the default launcher runs data tools without creating a wallet. To create a persistent wallet for one agent, configure:
+With no agent ID, the default launcher runs data tools without creating a wallet. To create a persistent wallet for one agent, run `npx @gnopulse/mcp setup`. It writes a config like this:
 
 ```json
 {
@@ -104,7 +115,7 @@ With no agent ID, the default launcher runs data tools without creating a wallet
 
 Give every logical agent a distinct lowercase `GNOPULSE_AGENT_ID`. Its keybase is stored under `~/.gnopulse-agent/agents/<chain>/<agent-id>` (or the same suffix beneath `GNOPULSE_AGENT_HOME`). An agent ID reuses its wallet on restart; different IDs and chains have separate wallets. API keys authenticate data access and do not grant wallet execution authority. Do not reuse another agent's ID or copy its keybase.
 
-The launcher starts its own authenticated loopback service with execution disabled. A named agent can inspect its address and simulate ordinary realm calls using public key metadata, without signing. Without an ID and with signing disabled, no keybase or service is created. Funding a wallet does not enable execution.
+For an agent whose wallet exists, the launcher starts its own authenticated loopback service with execution disabled. A named agent can inspect its address and simulate ordinary realm calls using public key metadata, without signing. Without an ID and with signing disabled, no keybase or service is created. Funding a wallet does not enable execution.
 
 The owner can explicitly select `GNOPULSE_SIGNER=user-approval`. Proposals return an unsigned preview and single-use token. `gno_confirm` asks the person in this order: a native approval window on this computer (macOS, Windows, or Linux with zenity or kdialog), then the client's MCP elicitation form, or an authenticated host approval when one is attached. The window works in any client, including ones too old to show forms; set `GNOPULSE_APPROVAL_DIALOG=off` to skip it. With no way to ask (no desktop, as over SSH, and a client without forms), `gno_agent_status` and the proposal itself say so, naming the client and how to update it, and no token is issued. The client chooses the presentation, such as an in-chat confirmation or approval card. A token or model-supplied tool argument is insufficient. Cancellation, refusal and expiry fail closed. An agent with unrestricted shell access and macOS Accessibility permission could in principle drive the approval window, so do not grant those to an agent you do not trust. Elicitation waits only until the proposal expires and follows tool-call cancellation; an expired, cancelled or failed approval cannot be revived by a late response. Clients must present these requests to the human, not automatically accept them.
 
@@ -188,7 +199,10 @@ Data access needs no wallet configuration. Execution requires an explicit agent 
 | `GNOPULSE_SIGNER_ADDR` | allocated loopback port | Exclusive local signer address; an occupied fixed address is refused |
 | `GNOTX_BIN` | bundled binary | Use your own `gnotx` build |
 | `GNOTX_SERVICE_URL` | `http://127.0.0.1:8787` | Signing service URL (the launcher sets it) |
-| `GNOTX_SERVICE_TOKEN` | | Signing service bearer token (the launcher sets it) |
+| `GNOTX_SERVICE_TOKEN` | | Signing service bearer token for a service you run yourself (the launcher pipes its own instead) |
+| `GNOTX_SERVICE_TOKEN_FD` | | Open file descriptor to read that token from (the launcher sets it, and it wins over `GNOTX_SERVICE_TOKEN`) |
+| `GNOPULSE_ALLOW_NO_BACKUP` | | Set to `1` to let the server create a wallet with no recovery phrase, for machines with no terminal |
+| `GNOPULSE_WALLET_BACKUP_MARK` | | File whose presence makes `gno_agent_status` report `recovery_backup` as `saved` (the launcher sets it) |
 | `GNOPULSE_MCP_TRANSPORT` | `stdio` | `http` for Streamable HTTP |
 | `GNOPULSE_MCP_HOST` | `127.0.0.1` | HTTP listen host |
 | `GNOPULSE_MCP_PORT` | `8080` | HTTP listen port |
@@ -249,7 +263,7 @@ not proof of wash trading or common ownership. Both accept supported windows of 
 30 days and an offset. These tools require the matching v2 API release and its rollups.
 Application-level errors inside HTTP-200 responses are returned as MCP tool errors.
 
-For data-only local use, omit `GNOPULSE_AGENT_ID` and set `GNOPULSE_SIGNER=none`: no binary, keybase, secrets or child service is needed. With an ID, the same signing-disabled setting creates that agent's wallet and starts an execution-disabled unsigned preview service.
+For data-only local use, omit `GNOPULSE_AGENT_ID` and set `GNOPULSE_SIGNER=none`: no binary, keybase, secrets or child service is needed. With an ID and an existing wallet, the same setting starts an execution-disabled service for it. With an ID and no wallet, the server runs data tools only until `setup` makes one.
 
 For an externally managed **per-agent** signing service, explicitly run `gnotx serve -allow-execute` with a private bearer token. Run `node dist/index.js` with the matching `GNOPULSE_AGENT_ID`, `GNOPULSE_AGENT_ADDRESS`, service URL/token and signer mode. Never share a signing identity between unrelated agents or attach a production settlement key to hosted MCP. Its lifetime belongs to your service manager.
 

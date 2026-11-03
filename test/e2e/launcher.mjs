@@ -19,7 +19,9 @@ const [cmd, ...args] = process.argv.slice(2);
 if (cmd === "keygen") console.log(JSON.stringify({ name: "gpagent", address: "${AGENT}", created: false }));
 if (cmd === "serve") {
   const flag = (name) => args[args.indexOf(name) + 1];
-  fs.writeFileSync(process.env.FAKE_SERVE_LOG, JSON.stringify({ pid: process.pid, args }));
+  const piped = JSON.parse(fs.readFileSync(0, "utf8"));
+  const leaked = ["GNOTX_PASSWORD", "GNOTX_SERVE_TOKEN", "GNOTX_SERVICE_TOKEN"].filter((n) => process.env[n]);
+  fs.writeFileSync(process.env.FAKE_SERVE_LOG, JSON.stringify({ pid: process.pid, args, piped, leaked }));
   const [host, port] = flag("-addr").split(":");
   http
     .createServer((_, res) => res.end(JSON.stringify({ ok: true, caller: "${AGENT}", chainid: flag("-chainid") })))
@@ -61,6 +63,7 @@ await run(async () => {
       GNOPULSE_SIGNER_ADDR: addr,
       FAKE_SERVE_LOG: serveLog,
       GNOPULSE_SIGNER: "user-approval",
+      GNOPULSE_ALLOW_NO_BACKUP: "1",
       ...extra
     });
 
@@ -90,6 +93,42 @@ await run(async () => {
       passive.code === 0 && !passiveServe.args.includes("-allow-execute"),
       passive.stderr
     );
+    check(
+      "signer secrets arrive by pipe and not in its environment",
+      passiveServe.piped.password && passiveServe.piped.serve_token && passiveServe.leaked.length === 0,
+      JSON.stringify(passiveServe.leaked)
+    );
+    const stale = path.join(dir, "agents", "gnoland-1", "passive", ".serve-token");
+    fs.writeFileSync(stale, "old");
+    const inherited = { GNOTX_PASSWORD: "inherited", GNOTX_SERVE_TOKEN: "inherited", GNOTX_SERVICE_TOKEN: "inherited" };
+    await launch(
+      baseEnv(`127.0.0.1:${await freePort()}`, { GNOPULSE_SIGNER: "", GNOPULSE_AGENT_ID: "passive", ...inherited }),
+      /ready \(stdio\)/,
+      true
+    );
+    const secondServe = JSON.parse(fs.readFileSync(serveLog, "utf8"));
+    check("each launch gets a new signer token", secondServe.piped.serve_token !== passiveServe.piped.serve_token);
+    check("the wallet password stays the same across launches", secondServe.piped.password === passiveServe.piped.password);
+    check("inherited signer secrets are not passed on", secondServe.leaked.length === 0, JSON.stringify(secondServe.leaked));
+    check("an old saved token is removed", !fs.existsSync(stale));
+    fs.rmSync(serveLog, { force: true });
+    const unset = await launch(
+      baseEnv(`127.0.0.1:${await freePort()}`, { GNOPULSE_AGENT_ID: "no-wallet", GNOPULSE_ALLOW_NO_BACKUP: "" }),
+      /ready \(stdio\)/,
+      true
+    );
+    check(
+      "with no wallet the server starts with signing off and creates nothing",
+      unset.code === 0 && !fs.existsSync(serveLog) && !fs.existsSync(path.join(dir, "agents", "gnoland-1", "no-wallet")) && /signer=none/.test(unset.stderr),
+      unset.stderr.trim()
+    );
+    check("the launcher names setup when there is no wallet", /gnopulse\/mcp setup/.test(unset.stderr));
+    const existing = await launch(
+      baseEnv(`127.0.0.1:${await freePort()}`, { GNOPULSE_AGENT_ID: "passive", GNOPULSE_ALLOW_NO_BACKUP: "" }),
+      /ready \(stdio\)/,
+      true
+    );
+    check("an existing wallet keeps working without the opt-out", existing.code === 0 && fs.existsSync(serveLog), existing.stderr.trim());
     const missing = await launch(baseEnv(undefined, { GNOPULSE_AGENT_ID: "" }), /ready/);
     check(
       "execution requires explicit agent identity",

@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "test/**"]
   pull_request:
 
 permissions:
@@ -37,3 +37,58 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: CGO_ENABLED=0 go build -trimpath ./...
+
+  platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GNOPULSE_APPROVAL_DIALOG: "off"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: gnotx/go.mod
+          cache-dependency-path: gnotx/go.sum
+      - run: npm ci
+      - run: npm run build
+      - run: CGO_ENABLED=0 go -C gnotx build -trimpath -o "$RUNNER_TEMP/gnotx$(go env GOEXE)" .
+      - run: node --test test/*.test.mjs
+      - run: GNOTX_BIN="$RUNNER_TEMP/gnotx$(go env GOEXE)" node test/e2e/real-signer.mjs
+        if: ${{ !cancelled() }}
+      - uses: actions/setup-python@v6
+        if: ${{ !cancelled() }}
+        with:
+          python-version: "3.12"
+      - name: Setup and backup in a terminal
+        if: ${{ !cancelled() }}
+        # Windows is new here: report it without blocking until it has run a few times.
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then pip install pywinpty; fi
+          EXE="$(go env GOEXE)"
+          CGO_ENABLED=0 go -C gnotx build -trimpath -o "$RUNNER_TEMP/gnokey$EXE" github.com/gnolang/gno/gno.land/cmd/gnokey
+          GNOTX_BIN="$RUNNER_TEMP/gnotx$EXE" GNOKEY_BIN="$RUNNER_TEMP/gnokey$EXE" python test/terminal.py
+      - name: Approval window
+        if: ${{ !cancelled() && runner.os != 'macOS' }}
+        # Hosted machines may not have a usable desktop, so this reports without blocking.
+        continue-on-error: true
+        env:
+          GNOPULSE_APPROVAL_DIALOG: ""
+          GNOPULSE_DIALOG_TEST: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq xvfb zenity xdotool openbox
+            xvfb-run -a sh -c 'openbox & sleep 1; node test/e2e/dialog.mjs'
+          else
+            node test/e2e/dialog.mjs
+          fi

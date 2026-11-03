@@ -26,7 +26,7 @@ test("a local agent wallet with signing off is named, not denied", async () => {
 });
 
 test("without an agent ID, the status says how to create one", async () => {
-  assert.match(await note({}), /no agent wallet is configured; set GNOPULSE_AGENT_ID/);
+  assert.match(await note({}), /no agent wallet is configured\. To make one, the user runs `npx @gnopulse\/mcp setup`/);
 });
 
 test("the hosted server still says it holds no wallet keys", async () => {

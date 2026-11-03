@@ -1,5 +1,5 @@
 {
-  "status": "0.3.8: 0.3.7 with a system approval window, early approval guidance and cost-first approval text",
+  "status": "0.3.9: 0.3.8 with a recovery phrase and backup command, signer secrets passed by pipe, and a refusal that asks the user",
   "tools": [
     {
       "name": "gno_agent_status",
