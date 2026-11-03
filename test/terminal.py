@@ -124,7 +124,10 @@ def read_phrase(term):
 
 def restored_address(args, stdin):
     home = tempfile.mkdtemp(dir=WORK)
-    subprocess.run([GNOKEY, *args, "-home", home, "-insecure-password-stdin"], input=stdin, capture_output=True, text=True)
+    # Bytes, so Windows keeps "\n": gnokey would read a "\r" as part of the password.
+    done = subprocess.run([GNOKEY, *args, "-home", home, "-insecure-password-stdin"], input=stdin.encode(), capture_output=True)
+    if done.returncode != 0:
+        print(done.stderr.decode(errors="replace")[-400:])
     return subprocess.run([GNOKEY, "list", "-home", home], capture_output=True, text=True).stdout
 
 

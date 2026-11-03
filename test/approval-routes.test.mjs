@@ -102,7 +102,7 @@ test("no dialog when switched off, over SSH, or on Linux without a display", () 
   assert.equal(systemDialog({ PATH: "/usr/bin" }, "linux"), null);
 });
 
-test("the dialog program gets the text as one argument, so it cannot inject commands", async () => {
+test("the dialog program gets the text as one argument, so it cannot inject commands", { skip: process.platform === "win32" && "a script cannot stand in for zenity on Windows" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dialog-"));
   const log = path.join(dir, "args.json");
   fs.writeFileSync(path.join(dir, "zenity"), `#!${process.execPath}\nrequire("fs").writeFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)));\nprocess.exit(0);\n`, { mode: 0o755 });
@@ -116,7 +116,7 @@ test("the dialog program gets the text as one argument, so it cannot inject comm
   assert.ok(args.includes("--default-cancel"));
 });
 
-test("a dialog left open past the approval expiry counts as expired and is closed", async () => {
+test("a dialog left open past the approval expiry counts as expired and is closed", { skip: process.platform === "win32" && "a script cannot stand in for zenity on Windows" }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dialog-"));
   fs.writeFileSync(path.join(dir, "zenity"), `#!${process.execPath}\nsetTimeout(() => process.exit(0), 10000);\n`, { mode: 0o755 });
   const dialog = systemDialog({ PATH: dir, DISPLAY: ":0" }, "linux");
