@@ -46,6 +46,30 @@ exit 1`;
 const pressLinux = (...keys) =>
   runIt("sh", ["-c", `id=$(xdotool search --sync --onlyvisible --name "${TITLE}" | head -1) && xdotool windowfocus --sync "$id" && xdotool key --delay 200 ${keys.join(" ")}`]);
 
+// Says whether this machine has a desktop, and what is on it while a window should be open.
+const describeWindows = () => {
+  const script = `$ErrorActionPreference = 'Continue'
+Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes,System.Drawing,System.Windows.Forms
+Write-Output ('interactive: ' + [Environment]::UserInteractive + ', session: ' + (Get-Process -Id $PID).SessionId)
+try {
+  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+  [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+  Write-Output ('screen capture works: ' + $bounds.Width + 'x' + $bounds.Height)
+} catch { Write-Output ('screen capture fails: ' + $_.Exception.Message) }
+Get-Process powershell, pwsh -ErrorAction SilentlyContinue | ForEach-Object { Write-Output ('process: ' + $_.ProcessName + ' ' + $_.Id + ' session ' + $_.SessionId + ' window [' + $_.MainWindowTitle + ']') }
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$kids = [System.Windows.Automation.TreeScope]::Children
+$any = [System.Windows.Automation.TreeScope]::Descendants
+$all = [System.Windows.Automation.Condition]::TrueCondition
+foreach ($w in $root.FindAll($kids, $all)) { Write-Output ('top window: ' + $w.Current.ClassName + ' [' + $w.Current.Name + ']') }
+Get-Process | Where-Object { $_.MainWindowTitle -eq '${TITLE}' } | ForEach-Object {
+  $e = [System.Windows.Automation.AutomationElement]::FromHandle($_.MainWindowHandle)
+  foreach ($c in $e.FindAll($any, $all)) { Write-Output ('inside: ' + $c.Current.ControlType.ProgrammaticName + ' [' + $c.Current.Name + ']') }
+}`;
+  return runIt("powershell.exe", ["-NoProfile", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+};
+
 const approve = () => (process.platform === "win32" ? clickWindows("OK") : pressLinux("Tab", "Return"));
 const decline = () => (process.platform === "win32" ? clickWindows("Cancel") : pressLinux("Return"));
 
@@ -59,6 +83,12 @@ const check = (name, ok, detail = "") => {
 check("this machine has an approval window", dialog !== null, dialog?.kind);
 if (dialog) {
   const ask = (ms) => dialog.ask("Test only.\nNothing is signed.", ms, new AbortController().signal);
+  if (process.platform === "win32") {
+    const open = ask(20000);
+    await sleep(8000);
+    await describeWindows();
+    console.log(`a window left alone answers: ${await open}`);
+  }
   for (const [name, act, want] of [
     ["the default choice declines", decline, "decline"],
     ["the approve button approves", approve, "approve"]
