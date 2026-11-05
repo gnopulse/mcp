@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.10 (unreleased)
+
+- `gno_wallet_token_transfers` returns a wallet's GRC20 history, cursor-paginated. It is history only: balances still come from `gno_wallet_tokens`.
+- `gno_wallet_app_activity` returns what apps did about a wallet, including actions an operator signed for it. It says which apps it covers, because an empty page says nothing about others.
+- `gno_realm_calls` and `gno_realm_events` read any realm's calls and events with arguments, by cursor, and `gno_transaction` reads one transaction by hash.
+- `gno_storage`, `gno_realm_storage` and `gno_wallet_storage` report storage deposits and unlocks. `gno_wallet_sessions` lists a wallet's session keys.
+- `gno_akkadia_stats`, `gno_akkadia_players`, `gno_akkadia_player`, `gno_akkadia_activity`, `gno_akkadia_catalog`, `gno_akkadia_worlds` and `gno_akkadia_lotto` read the Akkadia beta on mainnet.
+- `gno_token_metadata` and `gno_token_balance` read tokens that answer the GRC20 getters but never joined the registry, such as ABT, and report `registered: false`. Before, both said the token could not be verified.
+
 ## 0.3.9 (2026-11-03)
 
 - `setup` shows a new wallet's 24-word recovery phrase once, on a temporary terminal screen, and creates the wallet only after you confirm two of the words. Before, the phrase was discarded unseen, so a lost folder meant a lost wallet.

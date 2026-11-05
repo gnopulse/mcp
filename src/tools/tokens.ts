@@ -33,6 +33,7 @@ function decimalsOverrideFor(token: string, chainId: string): number | undefined
 const REGISTRY_KEY_RE = /grc20reg(?:\/[^:\s]*)?:([^)\s]+)/g;
 
 const quote = (s: string) => JSON.stringify(s);
+const PLAIN_REALM_RE = /^gno\.land\/r\/[A-Za-z0-9_\-/]+$/;
 
 /**
  * Token keys as the registry spells them. A bare realm that registers exactly one token
@@ -60,6 +61,21 @@ export function tokenKeys(rpc: RpcClient, registry: string) {
 export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: string, chainId = "gnoland-1"): void {
   const readToken = async (key: string, expr: string): Promise<GnoScalar> =>
     parseGnoScalar(absentToNull(await rpc.qeval(`${registry}.Get(${quote(key)}).${expr}`)));
+
+  // Some tokens answer the GRC20 getters but never registered, so the registry knows nothing of them.
+  // A realm path goes into the expression unquoted, so only a plain one is read.
+  const readRealm = async (realm: string, expr: string): Promise<GnoScalar> =>
+    parseGnoScalar(absentToNull(await rpc.qeval(`${realm}.${expr}`)));
+  const unregistered = async (token: string): Promise<{ realm: string; key: string } | null> => {
+    const slash = token.lastIndexOf("/");
+    const [pkg, wanted] = token.slice(slash + 1).split(".");
+    const realm = `${token.slice(0, slash)}/${pkg}`;
+    if (!PLAIN_REALM_RE.test(realm)) return null;
+    const symbol = await readRealm(realm, "GetSymbol()");
+    if (typeof symbol !== "string" || (wanted !== undefined && wanted !== symbol)) return null;
+    return { realm, key: `${realm}.${symbol}` };
+  };
+  const unregisteredNote = "not in the GRC20 registry; read directly from the realm";
 
   const keys = tokenKeys(rpc, registry);
   const registryKeys = keys.list;
@@ -114,8 +130,23 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
           readToken(token, "GetDecimals()"),
           readToken(token, "TotalSupply()"),
         ]);
-        if ([name, symbol, decimals, totalSupply].some(value => value === null))
-          throw new Error("Token metadata could not be verified for this identifier; use token registry discovery");
+        if ([name, symbol, decimals, totalSupply].some(value => value === null)) {
+          const direct = await unregistered(token);
+          const read = direct && await Promise.all(
+            ["GetName()", "GetSymbol()", "GetDecimals()", "TotalSupply()"].map(expr => readRealm(direct.realm, expr)));
+          if (!direct || !read || read.some(value => value === null))
+            throw new Error("Token metadata could not be verified for this identifier; use token registry discovery");
+          return ok({
+            token: direct.key,
+            name: read[0],
+            symbol: read[1],
+            decimals: read[2],
+            total_supply: read[3],
+            registered: false,
+            source: unregisteredNote,
+            decimals_note: "on-chain value; use gno_prices for authoritative display decimals + price",
+          });
+        }
         const override = decimalsOverrideFor(token, chainId);
         const overridden = override !== undefined && override !== decimals;
         return ok({
@@ -149,7 +180,14 @@ export function registerTokenTools(server: McpServer, rpc: RpcClient, registry: 
       guard(async () => {
         const token = await resolveKey(input);
         const balance = await readToken(token, `BalanceOf(${quote(address)})`);
-        if (balance === null) throw new Error("Token balance could not be verified; no zero balance is asserted");
+        if (balance === null) {
+          const direct = await unregistered(token);
+          const read = direct && await readRealm(direct.realm, `BalanceOf(${quote(address)})`);
+          if (!direct || read === null)
+            throw new Error("Token balance could not be verified; no zero balance is asserted");
+          return ok({ token: direct.key, address, balance_raw: read, registered: false, source: unregisteredNote,
+                      note: "raw units; divide by 10^decimals" });
+        }
         return ok({ token, address, balance_raw: balance, note: "raw units; divide by 10^decimals" });
       }),
   );

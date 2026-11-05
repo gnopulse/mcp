@@ -35,3 +35,27 @@ test('a bare realm resolves to its one registry key and native ugnot is pointed 
  const native=await handlers.gno_token_metadata({token:'ugnot'});
  assert.equal(native.isError,true);assert.match(native.content[0].text,/gno_get_balances/);
 });
+test('a token outside the registry reads directly from its realm and says so',async()=>{
+ const realm='gno.land/r/akkadia/beta/abt';
+ const rpc={qrender:async()=>'[gns](/r/nt/grc20reg/v0:gno.land/r/gnoswap/gns.GNS)',qeval:async expr=>{
+  if(expr.includes('grc20reg'))return {absent:true};
+  if(expr===`${realm}.GetName()`)return '("Akkadia" string)';
+  if(expr===`${realm}.GetSymbol()`)return '("abt" string)';
+  if(expr===`${realm}.GetDecimals()`)return '(6 int)';
+  if(expr===`${realm}.TotalSupply()`)return '(100 int64)';
+  if(expr===`${realm}.BalanceOf("g1alice")`)return '(7 int64)';
+  return {absent:true};
+ }};
+ const handlers=tools(rpc);
+ const meta=value(await handlers.gno_token_metadata({token:realm}));
+ assert.equal(meta.token,`${realm}.abt`);assert.equal(meta.registered,false);assert.equal(meta.total_supply,100);
+ const balance=value(await handlers.gno_token_balance({token:`${realm}.abt`,address:'g1alice'}));
+ assert.equal(balance.balance_raw,7);assert.equal(balance.registered,false);
+ assert.equal((await handlers.gno_token_metadata({token:`${realm}.OTHER`})).isError,true);
+});
+test('an identifier that is not a plain realm path never reaches an expression',async()=>{
+ const seen=[];
+ const handlers=tools({qrender:async()=>'',qeval:async expr=>{seen.push(expr);return {absent:true}}});
+ assert.equal((await handlers.gno_token_metadata({token:'gno.land/r/x\"+panic()/y.Q'})).isError,true);
+ assert.ok(seen.every(e=>e.includes('grc20reg')));
+});

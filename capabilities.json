@@ -1,11 +1,67 @@
 {
-  "status": "0.3.9: 0.3.8 with a recovery phrase and backup command, signer secrets passed by pipe, and a refusal that asks the user",
+  "status": "0.3.10: 0.3.9 plus realm feeds, transaction lookup, storage history, session keys, token transfer history, app activity by wallet, Akkadia tools, and token tools that read unregistered tokens",
   "tools": [
     {
       "name": "gno_agent_status",
       "source": "execution.ts",
       "transport": "hosted and local",
       "rest_paths": []
+    },
+    {
+      "name": "gno_akkadia_activity",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/activity"
+      ]
+    },
+    {
+      "name": "gno_akkadia_catalog",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/catalog"
+      ]
+    },
+    {
+      "name": "gno_akkadia_lotto",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/lotto/{number}"
+      ]
+    },
+    {
+      "name": "gno_akkadia_player",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/players/{address}"
+      ]
+    },
+    {
+      "name": "gno_akkadia_players",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/players"
+      ]
+    },
+    {
+      "name": "gno_akkadia_stats",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/stats"
+      ]
+    },
+    {
+      "name": "gno_akkadia_worlds",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/akkadia/worlds"
+      ]
     },
     {
       "name": "gno_api_usage",
@@ -404,11 +460,35 @@
       ]
     },
     {
+      "name": "gno_realm_calls",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/realms/{path}/calls"
+      ]
+    },
+    {
+      "name": "gno_realm_events",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/realms/{path}/events"
+      ]
+    },
+    {
       "name": "gno_realm_graph",
       "source": "datasets.ts",
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/realm-graph"
+      ]
+    },
+    {
+      "name": "gno_realm_storage",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/realms/{path}/storage"
       ]
     },
     {
@@ -460,6 +540,14 @@
       "source": "chain.ts",
       "transport": "hosted and local",
       "rest_paths": []
+    },
+    {
+      "name": "gno_storage",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/storage"
+      ]
     },
     {
       "name": "gno_swap",
@@ -519,11 +607,27 @@
       "rest_paths": []
     },
     {
+      "name": "gno_transaction",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/transactions/{hash}"
+      ]
+    },
+    {
       "name": "gno_validators",
       "source": "datasets.ts",
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/validators"
+      ]
+    },
+    {
+      "name": "gno_wallet_app_activity",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/app-activity"
       ]
     },
     {
@@ -564,6 +668,30 @@
       "transport": "hosted and local",
       "rest_paths": [
         "/v2/wallets/{address}/realms"
+      ]
+    },
+    {
+      "name": "gno_wallet_sessions",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/sessions"
+      ]
+    },
+    {
+      "name": "gno_wallet_storage",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/storage"
+      ]
+    },
+    {
+      "name": "gno_wallet_token_transfers",
+      "source": "v2.ts",
+      "transport": "hosted and local",
+      "rest_paths": [
+        "/v2/wallets/{address}/token-transfers"
       ]
     },
     {
