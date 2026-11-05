@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.10 (unreleased)
+## 0.3.10 (2026-11-04)
 
 - `gno_wallet_token_transfers` returns a wallet's GRC20 history, cursor-paginated. It is history only: balances still come from `gno_wallet_tokens`.
 - `gno_wallet_app_activity` returns what apps did about a wallet, including actions an operator signed for it. It says which apps it covers, because an empty page says nothing about others.
