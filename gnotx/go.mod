@@ -4,7 +4,7 @@ go 1.25.9
 
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.5.0
-	github.com/gnolang/gno v0.0.0-20260914072242-1bf7282dd85e
+	github.com/gnolang/gno v1.7.1
 )
 
 require (

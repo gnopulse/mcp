@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.11 (2026-11-17)
+
+- gnotx is built on gno v1.7.1. From v1.7.1, a node accepts a transaction only in its one canonical encoding. Onyx enforces this now, and mainnet will after its v1.8.0 upgrade. Earlier gnotx builds encode some transactions differently, and those transactions fail with `tx decode error` (`non-canonical encoding of std.Tx`). Transactions from this build are accepted by nodes before and after the change, so updating now is safe.
+- Signature verification (`gnotx verify`) still accepts wallet transactions in any encoding.
+
 ## 0.3.10 (2026-11-04)
 
 - `gno_wallet_token_transfers` returns a wallet's GRC20 history, cursor-paginated. It is history only: balances still come from `gno_wallet_tokens`.
