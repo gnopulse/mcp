@@ -198,6 +198,7 @@ Data access needs no wallet configuration. Execution requires an explicit agent 
 | `GNOPULSE_AGENT_ADDRESS` | launcher sets it | Expected service wallet, required when running an execution server directly |
 | `GNOPULSE_AGENT_HOME` | `~/.gnopulse-agent` | Root for `agents/<chain>/<agent-id>` keybases |
 | `GNOPULSE_SIGNER_ADDR` | allocated loopback port | Exclusive local signer address; an occupied fixed address is refused |
+| `GNOPULSE_MCP_UPDATE_CHECK` | `1` | `0` skips the startup check for a newer release on npm. A local server that is behind says so in `gno_agent_status` and once on a write or simulation result, and a transaction the chain refuses as too old a client says to update |
 | `GNOTX_BIN` | bundled binary | Use your own `gnotx` build |
 | `GNOTX_SERVICE_URL` | `http://127.0.0.1:8787` | Signing service URL (the launcher sets it) |
 | `GNOTX_SERVICE_TOKEN` | | Signing service bearer token for a service you run yourself (the launcher pipes its own instead) |

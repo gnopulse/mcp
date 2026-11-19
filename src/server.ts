@@ -19,6 +19,7 @@ import { registerChainTools } from "./tools/chain.js";
 import { registerTokenTools, tokenKeys } from "./tools/tokens.js";
 import { registerExecutionTools } from "./tools/execution.js";
 import { systemDialog } from "./signer/systemDialog.js";
+import { UpdateNotices, withUpdateNotices } from "./updates.js";
 
 export interface SharedDeps {
   rpc: RpcClient;
@@ -28,6 +29,8 @@ export interface SharedDeps {
   signer: Signer | null;
   approvals: ApprovalStore;
   simulationAvailable?: boolean;
+  /** Update and too-old-client notices for execution results; one per process. */
+  updates?: UpdateNotices;
 }
 
 export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
@@ -42,7 +45,7 @@ export function buildMcpServer(cfg: Config, deps: SharedDeps): McpServer {
   registerDatasetTools(server, api);
   registerChainTools(meteredServer, deps.rpc);
   registerTokenTools(meteredServer, deps.rpc, cfg.grc20Registry, cfg.chainId);
-  registerExecutionTools(meteredServer, {
+  registerExecutionTools(withUpdateNotices(meteredServer, deps.updates ?? new UpdateNotices()), {
     gnotx: deps.gnotx,
     rpc: deps.rpc,
     policy: deps.policy,

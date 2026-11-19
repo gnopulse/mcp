@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.12 (2026-11-19)
+
+- Setup pins an exact version, so an installed server never updates itself. A local server now checks npm once at startup and, when a newer release exists, says so in `gno_agent_status` and once on a write or simulation result, with the setting to change. The check never delays startup or fails it. `GNOPULSE_MCP_UPDATE_CHECK=0` turns it off; the hosted server does not check.
+- A transaction the chain refuses because the client is too old (gno's `non-canonical encoding` / `upgrade your client`) now comes with a plain instruction to update `@gnopulse/mcp`, instead of only the node's message about gno versions.
+
 ## 0.3.11 (2026-11-17)
 
 - gnotx is built on gno v1.7.1. From v1.7.1, a node accepts a transaction only in its one canonical encoding. Onyx enforces this now, and mainnet will after its v1.8.0 upgrade. Earlier gnotx builds encode some transactions differently, and those transactions fail with `tx decode error` (`non-canonical encoding of std.Tx`). Transactions from this build are accepted by nodes before and after the change, so updating now is safe.

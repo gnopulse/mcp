@@ -18,6 +18,7 @@ import { ApprovalStore } from "./signer/approvals.js";
 import { buildMcpServer, type SharedDeps } from "./server.js";
 import { startHttpServer } from "./http.js";
 import { VERSION } from "./version.js";
+import { UpdateNotices } from "./updates.js";
 
 function die(msg: string): never {
   process.stderr.write(`fatal: ${msg}\n`);
@@ -90,7 +91,16 @@ async function main(): Promise<void> {
   const { signer, policy } = selectSigner(gnotx);
   assertSafeSigner(signer, policy, cfg.transport);
 
+  const updates = new UpdateNotices();
+  // A local install pins its version; the hosted server is updated by its operator.
+  if (cfg.transport !== "http" && process.env.GNOPULSE_MCP_UPDATE_CHECK !== "0")
+    void updates.check().then(() => {
+      if (updates.latest)
+        process.stderr.write(`gnopulse-mcp v${updates.latest} is available (running v${VERSION})\n`);
+    });
+
   const deps: SharedDeps = {
+    updates,
     rpc: new RpcClient(cfg),
     gnotx,
     policy,
